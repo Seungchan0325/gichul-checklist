@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-ink: #171717;
+  --color-surface: #fafafa;
+  --color-line: #e5e5e5;
+  --color-done: #dcfce7;
+  --color-doing: #ffedd5;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--color-surface); color: var(--color-ink); }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, a { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
+::selection { background: #d4d4d4; }
