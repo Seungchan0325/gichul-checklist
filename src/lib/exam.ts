@@ -19,10 +19,9 @@ export function scoreAnswers(answers: AnswerMap, answerKeys: AnswerKey[]) {
   ), 0)
 }
 
-export function getAttemptStatus(answeredCount: number, questionCount: number, graded: boolean) {
+export function getAttemptStatus(answeredCount: number, questionCount: number, graded: boolean, timerStarted = false) {
   if (graded) return 'done' as const
-  if (answeredCount === 0) return 'new' as const
-  return 'doing' as const
+  return timerStarted || answeredCount > 0 ? 'doing' as const : 'new' as const
 }
 
 export function answeredCount(answers: AnswerMap) {

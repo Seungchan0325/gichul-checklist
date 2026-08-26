@@ -18,6 +18,7 @@ export type ExamListItem = ExamRecord & {
 }
 
 export type AttemptedExamItem = ExamListItem & { subject: Subject }
+export type CategorizedExamItem = ExamListItem & { subject: Subject }
 
 export type BootstrapData = {
   subjects: Subject[]
@@ -93,6 +94,35 @@ export async function loadAttemptedExams(userId: string): Promise<AttemptedExamI
       attempt,
     }]
   })
+}
+
+export async function loadAllExamSubjects(userId: string): Promise<CategorizedExamItem[]> {
+  const db = client()
+  const [linksResult, attemptsResult] = await Promise.all([
+    db.from('exam_subjects').select('id, subject_id, exams(*), subjects(*)'),
+    db.from('attempts').select('*').eq('user_id', userId),
+  ])
+  if (linksResult.error) throw linksResult.error
+  if (attemptsResult.error) throw attemptsResult.error
+
+  const attempts = new Map((attemptsResult.data ?? []).map(attempt => [attempt.exam_subject_id, attempt]))
+  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; subject_id: number; exams: ExamRecord; subjects: Subject }>
+  return links.flatMap(link => {
+    if (!link.exams || !link.subjects) return []
+    const attempt = attempts.get(link.id)
+    const rawAnswers = attempt?.answers && typeof attempt.answers === 'object' && !Array.isArray(attempt.answers) ? attempt.answers : {}
+    return [{
+      ...link.exams,
+      examSubjectId: link.id,
+      subjectId: link.subject_id,
+      subjectName: link.subjects.name,
+      subject: link.subjects,
+      status: attempt?.status ?? 'new',
+      score: attempt?.score ?? undefined,
+      progress: Object.values(rawAnswers).filter(value => String(value).trim()).length,
+      attempt,
+    }]
+  }).sort((a, b) => b.year - a.year || b.month - a.month || a.subject.sort_order - b.subject.sort_order)
 }
 
 export async function saveAttempt(userId: string, examSubjectId: number, values: {

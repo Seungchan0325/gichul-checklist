@@ -36,6 +36,7 @@ describe('grading', () => {
 
   it('채점하면 미응답 문항이 있어도 완료 상태가 된다', () => {
     expect(getAttemptStatus(0, 3, false)).toBe('new')
+    expect(getAttemptStatus(0, 3, false, true)).toBe('doing')
     expect(getAttemptStatus(1, 3, false)).toBe('doing')
     expect(getAttemptStatus(0, 3, true)).toBe('done')
     expect(getAttemptStatus(1, 3, true)).toBe('done')
