@@ -34,6 +34,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_audit_logs: {
+        Row: {
+          action: string
+          admin_user_id: string | null
+          created_at: string
+          details: Json
+          exam_id: number | null
+          id: number
+        }
+        Insert: {
+          action: string
+          admin_user_id?: string | null
+          created_at?: string
+          details?: Json
+          exam_id?: number | null
+          id?: number
+        }
+        Update: {
+          action?: string
+          admin_user_id?: string | null
+          created_at?: string
+          details?: Json
+          exam_id?: number | null
+          id?: number
+        }
+        Relationships: []
+      }
+      admin_users: {
+        Row: {
+          created_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       answer_keys: {
         Row: {
           answer: string
@@ -117,19 +159,25 @@ export type Database = {
         Row: {
           created_at: string
           exam_id: number
+          explanation_pdf_path: string | null
           id: number
+          question_pdf_path: string | null
           subject_id: number
         }
         Insert: {
           created_at?: string
           exam_id: number
+          explanation_pdf_path?: string | null
           id?: number
+          question_pdf_path?: string | null
           subject_id: number
         }
         Update: {
           created_at?: string
           exam_id?: number
+          explanation_pdf_path?: string | null
           id?: number
+          question_pdf_path?: string | null
           subject_id?: number
         }
         Relationships: [
@@ -152,32 +200,35 @@ export type Database = {
       exams: {
         Row: {
           created_at: string
-          explanation_url: string | null
           id: number
           is_development_data: boolean
           month: number
-          question_url: string | null
+          published_at: string | null
+          status: Database["public"]["Enums"]["exam_status"]
           title: string
+          updated_at: string
           year: number
         }
         Insert: {
           created_at?: string
-          explanation_url?: string | null
           id?: number
           is_development_data?: boolean
           month: number
-          question_url?: string | null
+          published_at?: string | null
+          status?: Database["public"]["Enums"]["exam_status"]
           title: string
+          updated_at?: string
           year: number
         }
         Update: {
           created_at?: string
-          explanation_url?: string | null
           id?: number
           is_development_data?: boolean
           month?: number
-          question_url?: string | null
+          published_at?: string | null
+          status?: Database["public"]["Enums"]["exam_status"]
           title?: string
+          updated_at?: string
           year?: number
         }
         Relationships: []
@@ -267,10 +318,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_admin: { Args: never; Returns: boolean }
     }
     Enums: {
       attempt_status: "new" | "doing" | "done"
+      exam_status: "draft" | "published"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -402,6 +454,7 @@ export const Constants = {
   public: {
     Enums: {
       attempt_status: ["new", "doing", "done"],
+      exam_status: ["draft", "published"],
     },
   },
 } as const

@@ -7,9 +7,11 @@ export type Subject = Database['public']['Tables']['subjects']['Row']
 export type Attempt = Database['public']['Tables']['attempts']['Row']
 export type ExamRecord = Database['public']['Tables']['exams']['Row']
 
-export type ExamListItem = ExamRecord & {
+export type ExamListItem = Omit<ExamRecord, 'status'> & {
   examSubjectId: number
   subjectId: number
+  question_pdf_path: string | null
+  explanation_pdf_path: string | null
   subjectName?: string
   status: 'new' | 'doing' | 'done'
   score?: number
@@ -53,30 +55,30 @@ export async function loadBootstrap(user: User): Promise<BootstrapData> {
 export async function loadExamsForSubject(userId: string, subjectId: number) {
   const db = client()
   const [linksResult, attemptsResult] = await Promise.all([
-    db.from('exam_subjects').select('id, exam_id, subject_id, exams(*)').eq('subject_id', subjectId),
+    db.from('exam_subjects').select('id, exam_id, subject_id, question_pdf_path, explanation_pdf_path, exams(*)').eq('subject_id', subjectId),
     db.from('attempts').select('*').eq('user_id', userId),
   ])
   if (linksResult.error) throw linksResult.error
   if (attemptsResult.error) throw attemptsResult.error
   const attempts = new Map((attemptsResult.data ?? []).map(attempt => [attempt.exam_subject_id, attempt]))
-  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; exam_id: number; subject_id: number; exams: ExamRecord }>
+  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; exam_id: number; subject_id: number; question_pdf_path: string | null; explanation_pdf_path: string | null; exams: ExamRecord }>
   return links.map(link => {
     const attempt = attempts.get(link.id)
     const rawAnswers = attempt?.answers && typeof attempt.answers === 'object' && !Array.isArray(attempt.answers) ? attempt.answers : {}
-    return { ...link.exams, examSubjectId: link.id, subjectId, status: attempt?.status ?? 'new', score: attempt?.score ?? undefined, progress: Object.values(rawAnswers).filter(value => String(value).trim()).length, attempt } as ExamListItem
+    return { ...link.exams, examSubjectId: link.id, subjectId, question_pdf_path: link.question_pdf_path, explanation_pdf_path: link.explanation_pdf_path, status: attempt?.status ?? 'new', score: attempt?.score ?? undefined, progress: Object.values(rawAnswers).filter(value => String(value).trim()).length, attempt } as ExamListItem
   }).sort((a, b) => b.year - a.year || a.month - b.month)
 }
 
 export async function loadAttemptedExams(userId: string): Promise<AttemptedExamItem[]> {
   const result = await client()
     .from('attempts')
-    .select('*, exam_subjects(id, subject_id, exams(*), subjects(*))')
+    .select('*, exam_subjects(id, subject_id, question_pdf_path, explanation_pdf_path, exams(*), subjects(*))')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
   if (result.error) throw result.error
 
   const attempts = (result.data ?? []) as unknown as Array<Attempt & {
-    exam_subjects: { id: number; subject_id: number; exams: ExamRecord; subjects: Subject } | null
+    exam_subjects: { id: number; subject_id: number; question_pdf_path: string | null; explanation_pdf_path: string | null; exams: ExamRecord; subjects: Subject } | null
   }>
   return attempts.flatMap(attempt => {
     const link = attempt.exam_subjects
@@ -86,6 +88,8 @@ export async function loadAttemptedExams(userId: string): Promise<AttemptedExamI
       ...link.exams,
       examSubjectId: link.id,
       subjectId: link.subject_id,
+      question_pdf_path: link.question_pdf_path,
+      explanation_pdf_path: link.explanation_pdf_path,
       subjectName: link.subjects.name,
       subject: link.subjects,
       status: attempt.status,
@@ -99,14 +103,14 @@ export async function loadAttemptedExams(userId: string): Promise<AttemptedExamI
 export async function loadAllExamSubjects(userId: string): Promise<CategorizedExamItem[]> {
   const db = client()
   const [linksResult, attemptsResult] = await Promise.all([
-    db.from('exam_subjects').select('id, subject_id, exams(*), subjects(*)'),
+    db.from('exam_subjects').select('id, subject_id, question_pdf_path, explanation_pdf_path, exams(*), subjects(*)'),
     db.from('attempts').select('*').eq('user_id', userId),
   ])
   if (linksResult.error) throw linksResult.error
   if (attemptsResult.error) throw attemptsResult.error
 
   const attempts = new Map((attemptsResult.data ?? []).map(attempt => [attempt.exam_subject_id, attempt]))
-  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; subject_id: number; exams: ExamRecord; subjects: Subject }>
+  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; subject_id: number; question_pdf_path: string | null; explanation_pdf_path: string | null; exams: ExamRecord; subjects: Subject }>
   return links.flatMap(link => {
     if (!link.exams || !link.subjects) return []
     const attempt = attempts.get(link.id)
@@ -115,6 +119,8 @@ export async function loadAllExamSubjects(userId: string): Promise<CategorizedEx
       ...link.exams,
       examSubjectId: link.id,
       subjectId: link.subject_id,
+      question_pdf_path: link.question_pdf_path,
+      explanation_pdf_path: link.explanation_pdf_path,
       subjectName: link.subjects.name,
       subject: link.subjects,
       status: attempt?.status ?? 'new',
@@ -151,6 +157,7 @@ export async function loadAnswerKeys(examSubjectId: number) {
   return result.data
 }
 
+
 export async function toggleShortcut(userId: string, subjectId: number, enabled: boolean) {
   const result = enabled
     ? await client().from('user_shortcuts').insert({ user_id: userId, subject_id: subjectId })
@@ -161,4 +168,23 @@ export async function toggleShortcut(userId: string, subjectId: number, enabled:
 export async function saveTheme(userId: string, theme: 'light' | 'dark') {
   const result = await client().from('profiles').update({ theme }).eq('id', userId)
   if (result.error) throw result.error
+}
+
+/** Permanently deletes the currently authenticated user's account. */
+export async function deleteAccount() {
+  const result = await client().functions.invoke('delete-account')
+  if (result.error) {
+    const response = (result.error as { context?: unknown }).context
+    if (response instanceof Response) {
+      const body = await response.json().catch(() => null) as { error?: string; message?: string } | null
+      if (body?.error || body?.message) throw new Error(body.error ?? body.message)
+    }
+    throw result.error
+  }
+}
+
+export async function createExamPdfUrl(path: string) {
+  const result = await client().storage.from('exam-pdfs').createSignedUrl(path, 60 * 10)
+  if (result.error) throw result.error
+  return result.data.signedUrl
 }

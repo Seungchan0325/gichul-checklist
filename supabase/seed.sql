@@ -22,17 +22,17 @@ insert into public.subjects (id, area, name, question_count, duration_seconds, s
 
 select setval(pg_get_serial_sequence('public.subjects', 'id'), (select max(id) from public.subjects));
 
-insert into public.exams (id, year, month, title, question_url, explanation_url, is_development_data) values
-  (1, 2027, 3, '3월 전국연합학력평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (2, 2027, 6, '6월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (3, 2027, 9, '9월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (4, 2026, 3, '3월 전국연합학력평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (5, 2026, 6, '6월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (6, 2026, 9, '9월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (7, 2026, 11, '대학수학능력시험', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (8, 2025, 6, '6월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (9, 2025, 9, '9월 모의평가', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true),
-  (10, 2025, 11, '대학수학능력시험', 'https://www.ebsi.co.kr', 'https://www.ebsi.co.kr', true);
+insert into public.exams (id, year, month, title, is_development_data, status, published_at) values
+  (1, 2027, 3, '3월 전국연합학력평가', true, 'published', now()),
+  (2, 2027, 6, '6월 모의평가', true, 'published', now()),
+  (3, 2027, 9, '9월 모의평가', true, 'published', now()),
+  (4, 2026, 3, '3월 전국연합학력평가', true, 'published', now()),
+  (5, 2026, 6, '6월 모의평가', true, 'published', now()),
+  (6, 2026, 9, '9월 모의평가', true, 'published', now()),
+  (7, 2026, 11, '대학수학능력시험', true, 'published', now()),
+  (8, 2025, 6, '6월 모의평가', true, 'published', now()),
+  (9, 2025, 9, '9월 모의평가', true, 'published', now()),
+  (10, 2025, 11, '대학수학능력시험', true, 'published', now());
 
 select setval(pg_get_serial_sequence('public.exams', 'id'), (select max(id) from public.exams));
 
