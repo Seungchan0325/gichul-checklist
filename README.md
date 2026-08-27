@@ -81,7 +81,7 @@ question_number,answer,points
 
 PDF를 제거하면 해당 과목만 초안으로 전환됩니다. 과목을 제거하면 해당 과목에 연결된 사용자 답안·점수·타이머가 함께 삭제됩니다. 같은 시행의 다른 과목이 없을 때만 시행 정보도 함께 제거됩니다.
 
-과목 영구 삭제는 과목명을 다시 입력해야 합니다. 삭제하면 해당 과목의 정답표, PDF와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
+기출 삭제는 시험명을 다시 입력해야 합니다. 삭제하면 선택한 기출 과목의 정답표, PDF와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
 
 ## PDF 저장소 관리
 
@@ -136,19 +136,17 @@ npm run build
 
 ### 개인 서버(Caddy) 배포
 
-서버에 Caddy와 Node.js를 설치하고, 저장소를 내려받습니다. `deploy/production.env.example`을 서버의 안전한 위치에 복사해 실제 Supabase 공개 URL·anon key와 도메인을 입력합니다. 이 파일은 저장소에 커밋하지 않습니다.
+서버에는 Caddy만 설치하고, 신뢰할 수 있는 개발 환경 또는 CI에서 빌드한 정적 파일을 올립니다. `deploy/production.env.example`은 빌드하는 환경에만 복사해 실제 Supabase 공개 URL·anon key를 입력합니다. 이 파일은 저장소에 커밋하지 않습니다.
 
 ```bash
 npm ci
-set -a; source /etc/gichul-checklist/production.env; set +a
+set -a; source ./production.env; set +a
 npm run build
 sudo install -d -m 755 /var/www/gichul-checklist
 sudo rsync -a --delete dist/ /var/www/gichul-checklist/
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-sudo systemctl reload caddy
 ```
 
-`/etc/caddy/Caddyfile`을 읽는 서비스 환경에 `DOMAIN`과 `ACME_EMAIL`도 설정합니다. Caddy 서버가 80·443 포트를 외부에 제공해야 인증서가 자동 발급됩니다. 배포 전 `sudo caddy validate --config /etc/caddy/Caddyfile`로 설정을 검사합니다.
+서버에서는 `deploy/Caddyfile`을 `/etc/caddy/Caddyfile`로 복사하고, `deploy/caddy.env.example`을 `/etc/gichul-checklist/caddy.env`로 복사해 실제 도메인과 ACME 이메일을 입력합니다. 이어서 systemd override에 `EnvironmentFile=/etc/gichul-checklist/caddy.env`를 설정합니다. Caddy 서버가 80·443 포트를 외부에 제공해야 인증서가 자동 발급됩니다. 배포 전 `sudo caddy validate --config /etc/caddy/Caddyfile`로 설정을 검사합니다.
 
 배포 후 확인 항목:
 
