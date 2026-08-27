@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /settings
+Disallow: /exam/
+
+Sitemap: https://gichul-checklist.pe.kr/sitemap.xml
