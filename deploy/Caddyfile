@@ -2,7 +2,7 @@
   email {$ACME_EMAIL}
 }
 
-{$DOMAIN} {
+{$DOMAIN} www.{$DOMAIN} {
   root * /var/www/gichul-checklist
   encode zstd gzip
 
