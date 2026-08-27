@@ -27,15 +27,16 @@ describe('parseAnswerKeyCsv', () => {
 })
 
 describe('validateAnswerKeys', () => {
-  const validRows: AdminAnswerKey[] = Array.from({ length: 20 }, (_, index) => ({ question_number: index + 1, answer: String(index % 5 + 1), points: 5 }))
+  const validRows: AdminAnswerKey[] = Array.from({ length: 20 }, (_, index) => ({ question_number: index + 1, answer: String(index % 5 + 1), points: index < 10 ? 2 : 3 }))
 
-  it('accepts a complete 100-point answer key', () => {
+  it('accepts a complete 50-point inquiry answer key', () => {
     expect(validateAnswerKeys(subject(), validRows)).toBeNull()
   })
 
   it('rejects incomplete keys and invalid totals', () => {
     expect(validateAnswerKeys(subject(), validRows.slice(1))).toContain('20개')
-    expect(validateAnswerKeys(subject(), validRows.map(row => ({ ...row, points: 4 })))).toContain('100점')
+    expect(validateAnswerKeys(subject(), validRows.map(row => ({ ...row, points: 2 })))).toContain('50점')
+    expect(validateAnswerKeys(subject(), validRows.map(row => ({ ...row, points: 5 })))).toContain('2·3점')
   })
 
   it('validates math short answers separately', () => {
@@ -44,5 +45,16 @@ describe('validateAnswerKeys', () => {
     expect(validateAnswerKeys(math, rows)).toBeNull()
     rows[15].answer = '정답'
     expect(validateAnswerKeys(math, rows)).toContain('16번')
+  })
+
+  it('applies the correct total and allowed points to each subject group', () => {
+    const korean = subject({ area: '국어', name: '화법과 작문', question_count: 45 })
+    const koreanRows = Array.from({ length: 45 }, (_, index) => ({ question_number: index + 1, answer: '1', points: index < 35 ? 2 : 3 }))
+    expect(validateAnswerKeys(korean, koreanRows)).toBeNull()
+
+    const secondLanguage = subject({ area: '제2외국어/한문', name: '독일어Ⅰ', question_count: 30 })
+    const secondLanguageRows = Array.from({ length: 30 }, (_, index) => ({ question_number: index + 1, answer: '1', points: index < 10 ? 1 : 2 }))
+    expect(validateAnswerKeys(secondLanguage, secondLanguageRows)).toBeNull()
+    expect(validateAnswerKeys(secondLanguage, secondLanguageRows.map(row => ({ ...row, points: 2 })))).toContain('50점')
   })
 })

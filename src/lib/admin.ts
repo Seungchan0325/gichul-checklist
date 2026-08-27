@@ -2,20 +2,19 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import type { Database, Json } from '../types/database.generated'
 import type { Subject } from './data'
-import { isMathShortAnswer } from './exam'
+import { isMathShortAnswer, scoreRuleForArea } from './exam'
 
 type Exam = Database['public']['Tables']['exams']['Row']
 type ExamSubject = Database['public']['Tables']['exam_subjects']['Row']
 export type AdminAnswerKey = Pick<Database['public']['Tables']['answer_keys']['Row'], 'question_number' | 'answer' | 'points'>
+export type AdminAuditLog = Database['public']['Tables']['admin_audit_logs']['Row']
 
-export type AdminExamSubject = ExamSubject & {
+export type ManagedExamSubject = ExamSubject & {
+  exam: Exam
   subject: Subject
   answerKeys: AdminAnswerKey[]
   attemptCount: number
 }
-
-export type AdminExam = Exam & { examSubjects: AdminExamSubject[] }
-export type AdminAuditLog = Database['public']['Tables']['admin_audit_logs']['Row']
 
 const client = () => {
   if (!supabase) throw new Error('Supabase 환경 변수가 설정되지 않았습니다.')
@@ -33,14 +32,11 @@ export async function isAdmin(userId: string) {
   return Boolean(result.data)
 }
 
-export async function loadAdminExams(): Promise<AdminExam[]> {
-  const result = await client().from('exams').select('*, exam_subjects(*, subjects(*), answer_keys(question_number, answer, points), attempts(id))').order('updated_at', { ascending: false })
+export async function loadManagedExamSubjects(): Promise<ManagedExamSubject[]> {
+  const result = await client().from('exam_subjects').select('*, exams(*), subjects(*), answer_keys(question_number, answer, points), attempts(id)').order('updated_at', { ascending: false })
   if (result.error) throw result.error
-  const rows = result.data as unknown as Array<Exam & { exam_subjects: Array<ExamSubject & { subjects: Subject; answer_keys: AdminAnswerKey[]; attempts: Array<{ id: string }> }> }>
-  return rows.map(({ exam_subjects, ...exam }) => ({
-    ...exam,
-    examSubjects: exam_subjects.map(({ subjects, answer_keys, attempts, ...link }) => ({ ...link, subject: subjects, answerKeys: answer_keys.sort((a, b) => a.question_number - b.question_number), attemptCount: attempts.length })).sort((a, b) => a.subject.sort_order - b.subject.sort_order),
-  }))
+  const rows = result.data as unknown as Array<ExamSubject & { exams: Exam; subjects: Subject; answer_keys: AdminAnswerKey[]; attempts: Array<{ id: string }> }>
+  return rows.map(({ exams, subjects, answer_keys, attempts, ...link }) => ({ ...link, exam: exams, subject: subjects, answerKeys: answer_keys.sort((a, b) => a.question_number - b.question_number), attemptCount: attempts.length }))
 }
 
 export async function loadAdminAuditLogs(): Promise<AdminAuditLog[]> {
@@ -49,55 +45,43 @@ export async function loadAdminAuditLogs(): Promise<AdminAuditLog[]> {
   return result.data
 }
 
-export async function createAdminExam(user: User, values: { year: number; month: number; title: string; isDevelopmentData: boolean; subjectIds: number[] }) {
+export async function createManagedExamSubject(user: User, values: { year: number; month: number; title: string; isDevelopmentData: boolean; subjectId: number }) {
   const db = client()
-  const examResult = await db.from('exams').insert({ year: values.year, month: values.month, title: values.title, is_development_data: values.isDevelopmentData, status: 'draft' }).select().single()
-  if (examResult.error) throw examResult.error
-  const exam = examResult.data
-  const linksResult = await db.from('exam_subjects').insert(values.subjectIds.map(subjectId => ({ exam_id: exam.id, subject_id: subjectId })))
-  if (linksResult.error) { await db.from('exams').delete().eq('id', exam.id); throw linksResult.error }
-  await audit(user.id, 'create_exam', exam.id, { year: exam.year, month: exam.month, title: exam.title, subject_ids: values.subjectIds })
-  return exam.id
+  const existing = await db.from('exams').select('*').eq('year', values.year).eq('month', values.month).eq('title', values.title.trim()).maybeSingle()
+  if (existing.error) throw existing.error
+  let exam = existing.data
+  let createdExam = false
+  if (!exam) {
+    const examResult = await db.from('exams').insert({ year: values.year, month: values.month, title: values.title.trim(), is_development_data: values.isDevelopmentData, status: 'draft' }).select().single()
+    if (examResult.error) throw examResult.error
+    exam = examResult.data; createdExam = true
+  }
+  const linkResult = await db.from('exam_subjects').insert({ exam_id: exam.id, subject_id: values.subjectId, status: 'draft' }).select().single()
+  if (linkResult.error) {
+    if (createdExam) await db.from('exams').delete().eq('id', exam.id)
+    throw linkResult.error
+  }
+  await audit(user.id, 'create_exam_subject', exam.id, { exam_subject_id: linkResult.data.id, subject_id: values.subjectId, year: values.year, month: values.month, title: values.title.trim() })
+  return linkResult.data.id
 }
 
-export async function updateAdminExam(user: User, exam: AdminExam, values: { year: number; month: number; title: string; isDevelopmentData: boolean; subjectIds: number[] }) {
-  const db = client()
-  const result = await db.from('exams').update({ year: values.year, month: values.month, title: values.title, is_development_data: values.isDevelopmentData }).eq('id', exam.id)
+export async function updateManagedExamSubject(user: User, item: ManagedExamSubject, values: { year: number; month: number; title: string; isDevelopmentData: boolean }) {
+  const result = await client().from('exams').update({ year: values.year, month: values.month, title: values.title.trim(), is_development_data: values.isDevelopmentData }).eq('id', item.exam_id)
   if (result.error) throw result.error
-  const previous = new Set(exam.examSubjects.map(item => item.subject_id))
-  const next = new Set(values.subjectIds)
-  const removed = exam.examSubjects.filter(item => !next.has(item.subject_id))
-  const added = values.subjectIds.filter(id => !previous.has(id))
-  const paths = removed.flatMap(item => [item.question_pdf_path, item.explanation_pdf_path]).filter((path): path is string => Boolean(path))
-  if (removed.length) {
-    const deleteResult = await db.from('exam_subjects').delete().in('id', removed.map(item => item.id))
-    if (deleteResult.error) throw deleteResult.error
-  }
-  if (paths.length) {
-    const storageResult = await db.storage.from('exam-pdfs').remove(paths)
-    if (storageResult.error) await audit(user.id, 'pdf_cleanup_failed', exam.id, { paths, message: storageResult.error.message })
-  }
-  if (added.length) {
-    const insertResult = await db.from('exam_subjects').insert(added.map(subjectId => ({ exam_id: exam.id, subject_id: subjectId })))
-    if (insertResult.error) throw insertResult.error
-  }
-  if (added.length && exam.status === 'published') {
-    const draftResult = await db.from('exams').update({ status: 'draft', published_at: null }).eq('id', exam.id)
-    if (draftResult.error) throw draftResult.error
-  }
-  await audit(user.id, 'update_exam', exam.id, { year: values.year, month: values.month, title: values.title, added_subject_ids: added, removed_subject_ids: removed.map(item => item.subject_id) })
+  await audit(user.id, 'update_exam_subject_metadata', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, ...values })
 }
 
 export function validateAnswerKeys(subject: Subject, rows: AdminAnswerKey[]) {
+  const scoreRule = scoreRuleForArea(subject.area)
   if (rows.length !== subject.question_count) return `${subject.question_count}개 문항을 모두 입력해 주세요.`
   const numbers = new Set(rows.map(row => row.question_number))
   if (numbers.size !== subject.question_count || rows.some(row => row.question_number < 1 || row.question_number > subject.question_count)) return '문항 번호가 중복되었거나 범위를 벗어났습니다.'
   for (const row of rows) {
     const validAnswer = isMathShortAnswer(subject.area, row.question_number) ? /^\d{1,3}$/.test(row.answer) : /^[1-5]$/.test(row.answer)
     if (!validAnswer) return `${row.question_number}번 정답 형식이 올바르지 않습니다.`
-    if (!Number.isInteger(row.points) || row.points <= 0) return `${row.question_number}번 배점이 올바르지 않습니다.`
+    if (!scoreRule.allowedPoints.includes(row.points)) return `${row.question_number}번 배점은 ${scoreRule.allowedPoints.join('·')}점만 사용할 수 있습니다.`
   }
-  if (rows.reduce((sum, row) => sum + row.points, 0) !== 100) return '배점 합계가 100점이어야 합니다.'
+  if (rows.reduce((sum, row) => sum + row.points, 0) !== scoreRule.total) return `배점 합계가 ${scoreRule.total}점이어야 합니다.`
   return null
 }
 
@@ -114,72 +98,71 @@ export function parseAnswerKeyCsv(csv: string): AdminAnswerKey[] {
   })
 }
 
-export async function saveAdminAnswerKeys(user: User, exam: AdminExam, link: AdminExamSubject, rows: AdminAnswerKey[]) {
-  const validationError = validateAnswerKeys(link.subject, rows)
+export async function saveManagedAnswerKeys(user: User, item: ManagedExamSubject, rows: AdminAnswerKey[]) {
+  const validationError = validateAnswerKeys(item.subject, rows)
   if (validationError) throw new Error(validationError)
   const db = client()
-  const deleteResult = await db.from('answer_keys').delete().eq('exam_subject_id', link.id)
+  const deleteResult = await db.from('answer_keys').delete().eq('exam_subject_id', item.id)
   if (deleteResult.error) throw deleteResult.error
-  const insertResult = await db.from('answer_keys').insert(rows.map(row => ({ ...row, exam_subject_id: link.id })))
+  const insertResult = await db.from('answer_keys').insert(rows.map(row => ({ ...row, exam_subject_id: item.id })))
   if (insertResult.error) throw insertResult.error
-  await audit(user.id, 'update_answer_keys', exam.id, { subject_id: link.subject_id, question_count: rows.length })
+  await audit(user.id, 'update_answer_keys', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, question_count: rows.length })
 }
 
-export async function uploadAdminPdf(user: User, examId: number, link: AdminExamSubject, kind: 'question' | 'explanation', file: File) {
+export async function uploadManagedPdf(user: User, item: ManagedExamSubject, kind: 'question' | 'explanation', file: File) {
   if (file.type !== 'application/pdf') throw new Error('PDF 파일만 업로드할 수 있습니다.')
   if (file.size > 50 * 1024 * 1024) throw new Error('PDF 파일은 50MB 이하여야 합니다.')
   const db = client()
-  const path = `exams/${examId}/subjects/${link.subject_id}/${kind}.pdf`
+  const path = `exams/${item.exam_id}/subjects/${item.subject_id}/${kind}.pdf`
   const uploadResult = await db.storage.from('exam-pdfs').upload(path, file, { contentType: 'application/pdf', upsert: true })
   if (uploadResult.error) throw uploadResult.error
-  const pdfUpdate: Database['public']['Tables']['exam_subjects']['Update'] = kind === 'question' ? { question_pdf_path: path } : { explanation_pdf_path: path }
-  const updateResult = await db.from('exam_subjects').update(pdfUpdate).eq('id', link.id)
+  const update = kind === 'question' ? { question_pdf_path: path } : { explanation_pdf_path: path }
+  const updateResult = await db.from('exam_subjects').update(update).eq('id', item.id)
   if (updateResult.error) throw updateResult.error
-  await audit(user.id, `upload_${kind}_pdf`, examId, { subject_id: link.subject_id, path, size: file.size })
+  await audit(user.id, `upload_${kind}_pdf`, item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, path, size: file.size })
 }
 
-export async function removeAdminPdf(user: User, exam: AdminExam, link: AdminExamSubject, kind: 'question' | 'explanation') {
+export async function removeManagedPdf(user: User, item: ManagedExamSubject, kind: 'question' | 'explanation') {
   const db = client()
-  const path = kind === 'question' ? link.question_pdf_path : link.explanation_pdf_path
+  const path = kind === 'question' ? item.question_pdf_path : item.explanation_pdf_path
   if (!path) return
   const storageResult = await db.storage.from('exam-pdfs').remove([path])
   if (storageResult.error) throw storageResult.error
-  const pdfUpdate: Database['public']['Tables']['exam_subjects']['Update'] = kind === 'question' ? { question_pdf_path: null } : { explanation_pdf_path: null }
-  const linkResult = await db.from('exam_subjects').update(pdfUpdate).eq('id', link.id)
+  const update = kind === 'question' ? { question_pdf_path: null, status: 'draft' as const, published_at: null } : { explanation_pdf_path: null, status: 'draft' as const, published_at: null }
+  const linkResult = await db.from('exam_subjects').update(update).eq('id', item.id)
   if (linkResult.error) throw linkResult.error
-  if (exam.status === 'published') {
-    const draftResult = await db.from('exams').update({ status: 'draft', published_at: null }).eq('id', exam.id)
-    if (draftResult.error) throw draftResult.error
-  }
-  await audit(user.id, `remove_${kind}_pdf`, exam.id, { subject_id: link.subject_id, path })
+  await audit(user.id, `remove_${kind}_pdf`, item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, path })
 }
 
-export async function publishAdminExam(user: User, exam: AdminExam) {
-  if (!exam.examSubjects.length) throw new Error('최소 한 과목을 선택해 주세요.')
-  for (const link of exam.examSubjects) {
-    if (!link.question_pdf_path || !link.explanation_pdf_path) throw new Error(`${link.subject.name}의 문제·해설 PDF가 모두 필요합니다.`)
-    const validationError = validateAnswerKeys(link.subject, link.answerKeys)
-    if (validationError) throw new Error(`${link.subject.name}: ${validationError}`)
-  }
-  const result = await client().from('exams').update({ status: 'published', published_at: new Date().toISOString() }).eq('id', exam.id)
+export async function publishManagedExamSubject(user: User, item: ManagedExamSubject) {
+  if (!item.question_pdf_path || !item.explanation_pdf_path) throw new Error('문제·해설 PDF가 모두 필요합니다.')
+  const validationError = validateAnswerKeys(item.subject, item.answerKeys)
+  if (validationError) throw new Error(validationError)
+  const result = await client().from('exam_subjects').update({ status: 'published', published_at: new Date().toISOString() }).eq('id', item.id)
   if (result.error) throw result.error
-  await audit(user.id, 'publish_exam', exam.id, { subject_count: exam.examSubjects.length })
+  await audit(user.id, 'publish_exam_subject', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id })
 }
 
-export async function unpublishAdminExam(user: User, examId: number) {
-  const result = await client().from('exams').update({ status: 'draft', published_at: null }).eq('id', examId)
+export async function unpublishManagedExamSubject(user: User, item: ManagedExamSubject) {
+  const result = await client().from('exam_subjects').update({ status: 'draft', published_at: null }).eq('id', item.id)
   if (result.error) throw result.error
-  await audit(user.id, 'unpublish_exam', examId)
+  await audit(user.id, 'unpublish_exam_subject', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id })
 }
 
-export async function deleteAdminExam(user: User, exam: AdminExam) {
+export async function deleteManagedExamSubject(user: User, item: ManagedExamSubject) {
   const db = client()
-  const paths = exam.examSubjects.flatMap(item => [item.question_pdf_path, item.explanation_pdf_path]).filter((path): path is string => Boolean(path))
-  const deleteResult = await db.from('exams').delete().eq('id', exam.id)
+  const paths = [item.question_pdf_path, item.explanation_pdf_path].filter((path): path is string => Boolean(path))
+  const deleteResult = await db.from('exam_subjects').delete().eq('id', item.id)
   if (deleteResult.error) throw deleteResult.error
-  await audit(user.id, 'delete_exam', exam.id, { year: exam.year, month: exam.month, title: exam.title, subject_ids: exam.examSubjects.map(item => item.subject_id), attempt_count: exam.examSubjects.reduce((sum, item) => sum + item.attemptCount, 0), pdf_paths: paths })
+  const remainingResult = await db.from('exam_subjects').select('id').eq('exam_id', item.exam_id).limit(1)
+  if (remainingResult.error) throw remainingResult.error
+  if (!remainingResult.data.length) {
+    const parentResult = await db.from('exams').delete().eq('id', item.exam_id)
+    if (parentResult.error) throw parentResult.error
+  }
+  await audit(user.id, 'delete_exam_subject', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, year: item.exam.year, month: item.exam.month, title: item.exam.title, attempt_count: item.attemptCount, pdf_paths: paths })
   if (paths.length) {
     const storageResult = await db.storage.from('exam-pdfs').remove(paths)
-    if (storageResult.error) await audit(user.id, 'pdf_cleanup_failed', exam.id, { paths, message: storageResult.error.message })
+    if (storageResult.error) await audit(user.id, 'pdf_cleanup_failed', item.exam_id, { exam_subject_id: item.id, paths, message: storageResult.error.message })
   }
 }

@@ -19,6 +19,7 @@ insert into auth.users (
 
 insert into public.admin_users (user_id) values ('30000000-0000-0000-0000-000000000003');
 insert into public.exams (id, year, month, title, status) values (999, 2028, 3, '관리자 초안 시험', 'draft');
+insert into public.exam_subjects (exam_id, subject_id, status) values (999, 1, 'draft');
 
 insert into public.user_shortcuts (user_id, subject_id) values
   ('10000000-0000-0000-0000-000000000001', 1),
@@ -46,12 +47,13 @@ select is(
       from public.exam_subjects es
       join public.subjects s on s.id = es.subject_id
       join public.answer_keys answer_key on answer_key.exam_subject_id = es.id
-      group by es.id, s.question_count
-      having count(answer_key.id) = s.question_count and sum(answer_key.points) = 100
+      group by es.id, s.question_count, s.area
+      having count(answer_key.id) = s.question_count
+        and sum(answer_key.points) = case when s.area in ('국어', '수학', '영어') then 100 else 50 end
     ) valid_answer_sets
   ),
   390::bigint,
-  'every seeded answer set matches its subject question count and totals 100 points'
+  'every seeded answer set matches its subject question count and score rule total'
 );
 
 select lives_ok(

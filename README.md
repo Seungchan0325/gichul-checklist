@@ -58,10 +58,10 @@ where user_id = '관리자 권한을 제거할 사용자 UUID';
 
 관리자 계정으로 로그인한 뒤 헤더의 `관리`를 엽니다.
 
-1. `새 기출 추가`에서 연도, 시행 월, 시험명과 시행 과목을 선택해 초안을 생성합니다.
-2. 각 과목에 문제·해설 PDF를 업로드합니다.
+1. `새 기출 과목 추가`에서 연도, 시행 월, 시험명과 과목 하나를 선택해 초안을 생성합니다. 같은 시행에 다른 과목을 추가할 때도 이 과정을 반복합니다.
+2. 선택한 과목에 문제·해설 PDF를 업로드합니다.
 3. 정답과 배점을 직접 입력하거나 CSV로 가져옵니다.
-4. 모든 과목의 자료가 준비되면 `검증 후 게시`를 실행합니다.
+4. 해당 과목의 자료가 준비되면 `검증 후 게시`를 실행합니다. 다른 과목의 초안·게시 상태에는 영향을 주지 않습니다.
 
 CSV 형식:
 
@@ -73,15 +73,15 @@ question_number,answer,points
 
 게시 조건:
 
-- 선택된 과목이 한 개 이상이어야 합니다.
-- 각 과목에 문제 PDF와 해설 PDF가 모두 있어야 합니다.
-- 과목별 전체 문항의 정답과 배점이 있어야 합니다.
+- 해당 과목에 문제 PDF와 해설 PDF가 모두 있어야 합니다.
+- 해당 과목의 전체 문항 정답과 배점이 있어야 합니다.
 - 객관식 답은 1–5, 수학 단답형은 1–3자리 숫자여야 합니다.
-- 과목별 배점 합계가 100점이어야 합니다.
+- 국어·수학·영어는 100점, 한국사·탐구·제2외국어/한문은 50점이어야 합니다.
+- 국어·영어·한국사·탐구는 2·3점, 수학은 2·3·4점, 제2외국어/한문은 1·2점 배점만 사용할 수 있습니다.
 
-게시된 시험에 과목을 추가하거나 PDF를 제거하면 초안으로 전환됩니다. 과목을 제거하면 해당 과목에 연결된 사용자 답안·점수·타이머가 함께 삭제됩니다.
+PDF를 제거하면 해당 과목만 초안으로 전환됩니다. 과목을 제거하면 해당 과목에 연결된 사용자 답안·점수·타이머가 함께 삭제됩니다. 같은 시행의 다른 과목이 없을 때만 시행 정보도 함께 제거됩니다.
 
-시험 영구 삭제는 시험명을 다시 입력해야 합니다. 삭제하면 시험, 과목 연결, 정답표, PDF와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
+과목 영구 삭제는 과목명을 다시 입력해야 합니다. 삭제하면 해당 과목의 정답표, PDF와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
 
 ## PDF 저장소 관리
 
@@ -124,6 +124,7 @@ npm run build
 
 ```bash
 supabase db push
+supabase secrets set ALLOWED_ORIGIN=https://YOUR_DOMAIN
 npm run functions:deploy
 ```
 
@@ -132,6 +133,22 @@ npm run functions:deploy
 ```bash
 npm run build
 ```
+
+### 개인 서버(Caddy) 배포
+
+서버에 Caddy와 Node.js를 설치하고, 저장소를 내려받습니다. `deploy/production.env.example`을 서버의 안전한 위치에 복사해 실제 Supabase 공개 URL·anon key와 도메인을 입력합니다. 이 파일은 저장소에 커밋하지 않습니다.
+
+```bash
+npm ci
+set -a; source /etc/gichul-checklist/production.env; set +a
+npm run build
+sudo install -d -m 755 /var/www/gichul-checklist
+sudo rsync -a --delete dist/ /var/www/gichul-checklist/
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+`/etc/caddy/Caddyfile`을 읽는 서비스 환경에 `DOMAIN`과 `ACME_EMAIL`도 설정합니다. Caddy 서버가 80·443 포트를 외부에 제공해야 인증서가 자동 발급됩니다. 배포 전 `sudo caddy validate --config /etc/caddy/Caddyfile`로 설정을 검사합니다.
 
 배포 후 확인 항목:
 

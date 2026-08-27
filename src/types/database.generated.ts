@@ -161,24 +161,33 @@ export type Database = {
           exam_id: number
           explanation_pdf_path: string | null
           id: number
+          published_at: string | null
           question_pdf_path: string | null
+          status: Database["public"]["Enums"]["exam_status"]
           subject_id: number
+          updated_at: string
         }
         Insert: {
           created_at?: string
           exam_id: number
           explanation_pdf_path?: string | null
           id?: number
+          published_at?: string | null
           question_pdf_path?: string | null
+          status?: Database["public"]["Enums"]["exam_status"]
           subject_id: number
+          updated_at?: string
         }
         Update: {
           created_at?: string
           exam_id?: number
           explanation_pdf_path?: string | null
           id?: number
+          published_at?: string | null
           question_pdf_path?: string | null
+          status?: Database["public"]["Enums"]["exam_status"]
           subject_id?: number
+          updated_at?: string
         }
         Relationships: [
           {

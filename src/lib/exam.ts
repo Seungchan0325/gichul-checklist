@@ -8,6 +8,15 @@ export const expectedQuestionCount = (area: string) => {
   return 20
 }
 
+export type ScoreRule = { total: number; allowedPoints: number[] }
+
+export const scoreRuleForArea = (area: string): ScoreRule => {
+  if (area === '수학') return { total: 100, allowedPoints: [2, 3, 4] }
+  if (area === '국어' || area === '영어') return { total: 100, allowedPoints: [2, 3] }
+  if (area === '제2외국어/한문') return { total: 50, allowedPoints: [1, 2] }
+  return { total: 50, allowedPoints: [2, 3] }
+}
+
 export const isMathShortAnswer = (area: string, number: number) =>
   area === '수학' && ((number >= 16 && number <= 22) || number >= 29)
 

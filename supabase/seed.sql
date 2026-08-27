@@ -36,18 +36,22 @@ insert into public.exams (id, year, month, title, is_development_data, status, p
 
 select setval(pg_get_serial_sequence('public.exams', 'id'), (select max(id) from public.exams));
 
-insert into public.exam_subjects (exam_id, subject_id)
-select e.id, s.id from public.exams e cross join public.subjects s;
+insert into public.exam_subjects (exam_id, subject_id, status, published_at)
+select e.id, s.id, 'published', now() from public.exams e cross join public.subjects s;
 
 insert into public.answer_keys (exam_subject_id, question_number, answer, points)
 select es.id, q.number,
   case when s.area = '수학' and ((q.number between 16 and 22) or q.number >= 29)
     then (((es.exam_id * 17 + s.id * 11 + q.number * 7) % 999) + 1)::text
     else (((es.exam_id + s.id + q.number) % 5) + 1)::text end,
-  case when s.question_count = 20 then 5
+  case when s.area = '제2외국어/한문' and q.number <= 10 then 1
+    when s.area = '제2외국어/한문' then 2
+    when s.question_count = 20 and q.number <= 10 then 2
+    when s.question_count = 20 then 3
     when s.question_count = 45 and q.number <= 35 then 2
     when s.question_count = 45 then 3
-    when s.question_count = 30 and q.number <= 20 then 3
+    when s.area = '수학' and q.number <= 5 then 2
+    when s.area = '수학' and q.number <= 15 then 3
     else 4 end
 from public.exam_subjects es
 join public.subjects s on s.id = es.subject_id
