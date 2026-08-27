@@ -8,11 +8,31 @@ import { isAdmin as checkIsAdmin } from './lib/admin'
 import AdminPage from './AdminPage'
 
 type Page = 'home' | 'subjects' | 'list' | 'exam' | 'settings' | 'admin'
+type Route = { page: Page; subjectId?: number; examSubjectId?: number }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 const cn = (...values: (string | false | undefined)[]) => values.filter(Boolean).join(' ')
 const multiAreas = new Set(['사회탐구', '과학탐구', '직업탐구'])
 const googleAccountDeletionKey = 'gichul-checklist:google-account-deletion'
+
+function readRoute(): Route {
+  const parts = window.location.pathname.split('/').filter(Boolean)
+  if (parts[0] === 'subjects' && parts[1]) return { page: 'list', subjectId: Number(parts[1]) }
+  if (parts[0] === 'exam' && parts[1]) return { page: 'exam', examSubjectId: Number(parts[1]) }
+  if (parts[0] === 'subjects') return { page: 'subjects' }
+  if (parts[0] === 'settings') return { page: 'settings' }
+  if (parts[0] === 'admin') return { page: 'admin' }
+  return { page: 'home' }
+}
+
+function routePath(route: Route) {
+  if (route.page === 'list' && route.subjectId) return `/subjects/${route.subjectId}`
+  if (route.page === 'exam' && route.examSubjectId) return `/exam/${route.examSubjectId}`
+  if (route.page === 'subjects') return '/subjects'
+  if (route.page === 'settings') return '/settings'
+  if (route.page === 'admin') return '/admin'
+  return '/'
+}
 
 function ConfigError() {
   return <main className="grid min-h-screen place-items-center bg-surface px-5 text-ink dark:bg-neutral-950 dark:text-white"><div className="max-w-lg border-y border-line py-8 dark:border-neutral-800"><p className="text-sm font-bold text-red-600">Supabase 연결 필요</p><h1 className="mt-2 text-2xl font-bold">환경 변수를 설정해 주세요.</h1><p className="mt-3 text-sm leading-6 text-neutral-500"><code>.env.example</code>을 <code>.env.local</code>로 복사하고 로컬 Supabase의 anon key를 입력한 뒤 개발 서버를 다시 시작하세요.</p></div></main>
@@ -213,7 +233,7 @@ function SettingsPage({ user, subjects, shortcuts, setShortcuts, dark, setDark, 
 function BottomNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }) { return <nav className="fixed bottom-0 left-0 right-0 z-20 grid grid-cols-3 border-t border-line bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden dark:border-neutral-800 dark:bg-neutral-950/95">{[{ id: 'home', label: '홈', Icon: Home }, { id: 'subjects', label: '기출', Icon: BookOpen }, { id: 'settings', label: '설정', Icon: Settings }].map(({ id, label, Icon }) => <button key={id} onClick={() => setPage(id as Page)} className={cn('flex h-16 flex-col items-center justify-center gap-1 text-[11px]', page === id || (id === 'subjects' && page === 'list') ? 'font-bold' : 'text-neutral-500')}><Icon size={20}/>{label}</button>)}</nav> }
 
 function AuthenticatedApp({ user }: { user: User }) {
-  const [page, setPage] = useState<Page>('home')
+  const [route, setRoute] = useState<Route>(readRoute)
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [subject, setSubject] = useState<Subject | null>(null)
   const [exams, setExams] = useState<CategorizedExamItem[]>([])
@@ -226,7 +246,16 @@ function AuthenticatedApp({ user }: { user: User }) {
   const [error, setError] = useState('')
   const [admin, setAdmin] = useState(false)
   const [googleReauthenticatedForDeletion, setGoogleReauthenticatedForDeletion] = useState(false)
+  const page = route.page
   const grouped = useMemo(() => { const map = new Map<string, Subject[]>(); subjects.forEach(item => map.set(item.area, [...(map.get(item.area) ?? []), item])); return map }, [subjects])
+  const navigate = useCallback((next: Page, params: Omit<Route, 'page'> = {}) => { const nextRoute: Route = { page: next, ...params }; window.history.pushState(nextRoute, '', routePath(nextRoute)); setRoute(nextRoute); window.scrollTo({ top: 0, behavior: 'smooth' }) }, [])
+  useEffect(() => { const onPopState = () => setRoute(readRoute()); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState) }, [])
+  useEffect(() => {
+    if (route.subjectId) setSubject(subjects.find(item => item.id === route.subjectId) ?? null)
+    else if (route.page !== 'list' && route.page !== 'exam') setSubject(null)
+    if (route.examSubjectId) { const found = exams.find(item => item.examSubjectId === route.examSubjectId) ?? null; setSelectedExam(found); if (found) setSubject(found.subject) }
+    else if (route.page !== 'exam') setSelectedExam(null)
+  }, [route, subjects, exams])
   useEffect(() => { let active = true; loadBootstrap(user).then(async data => { if (!active) return { allExams: [], attempts: [] }; setSubjects(data.subjects); setShortcuts(data.shortcutSubjectIds); setDisplayName(data.displayName); setDarkState(data.theme === 'dark'); const [allExams, attempts] = await Promise.all([loadAllExamSubjects(user.id), loadAttemptedExams(user.id)]); return { allExams, attempts } }).then(data => { if (active) { setExams(data.allExams); setAttemptedExams(data.attempts) } }).catch(value => { if (active) setError(value.message) }).finally(() => { if (active) setLoading(false) }); return () => { active = false } }, [user])
   useEffect(() => { document.documentElement.classList.toggle('dark', dark) }, [dark])
   useEffect(() => { checkIsAdmin(user.id).then(setAdmin).catch(value => setError(value.message)) }, [user.id])
@@ -236,23 +265,23 @@ function AuthenticatedApp({ user }: { user: User }) {
     sessionStorage.removeItem(googleAccountDeletionKey)
     try {
       const { userId } = JSON.parse(pending) as { userId?: string }
-      if (userId === user.id) { setGoogleReauthenticatedForDeletion(true); setPage('settings') }
+      if (userId === user.id) { setGoogleReauthenticatedForDeletion(true); navigate('settings') }
       else setError('Google로 다시 로그인한 계정이 원래 계정과 다릅니다. 계정 삭제를 취소했습니다.')
     } catch { setError('계정 삭제 재인증 정보를 확인하지 못했습니다. 다시 시도해 주세요.') }
-  }, [user.id])
+  }, [user.id, navigate])
 
   const setDark = (value: boolean) => { setDarkState(value); void saveTheme(user.id, value ? 'dark' : 'light').catch(() => setError('테마 설정을 저장하지 못했습니다.')) }
-  const go = (next: Page) => { setPage(next); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  const go = (next: Page) => navigate(next)
   const updateAttempt = useCallback((attempt: Awaited<ReturnType<typeof saveAttempt>>) => { const update = <T extends CategorizedExamItem>(item: T) => item.examSubjectId === attempt.exam_subject_id ? { ...item, attempt, status: attempt.status, score: attempt.score ?? undefined, progress: answeredCount(parseAnswers(attempt.answers)) } : item; setExams(current => current.map(update)); setSelectedExam(current => current?.examSubjectId === attempt.exam_subject_id ? update(current) : current); void Promise.all([loadAllExamSubjects(user.id), loadAttemptedExams(user.id)]).then(([allExams, attempts]) => { setExams(allExams); setAttemptedExams(attempts) }).catch(value => setError(value.message)) }, [user.id])
-  const openExam = (exam: CategorizedExamItem) => { setSubject(exam.subject); setSelectedExam(exam); setPage('exam'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-  const selectSubject = (next: Subject) => { setSubject(next); go('list') }
+  const openExam = (exam: CategorizedExamItem) => { setSubject(exam.subject); setSelectedExam(exam); navigate('exam', { examSubjectId: exam.examSubjectId, subjectId: exam.subjectId }) }
+  const selectSubject = (next: Subject) => { setSubject(next); navigate('list', { subjectId: next.id }) }
   const reloadExamData = () => { setLoading(true); void Promise.all([loadAllExamSubjects(user.id), loadAttemptedExams(user.id)]).then(([allExams, attempts]) => { setExams(allExams); setAttemptedExams(attempts) }).catch(value => setError(value.message)).finally(() => setLoading(false)) }
 
   if (loading && !subjects.length) return <main className="grid min-h-screen place-items-center text-sm text-neutral-500">학습 기록을 불러오는 중…</main>
   if (error && !subjects.length) return <main className="grid min-h-screen place-items-center px-4"><div><h1 className="text-xl font-bold">데이터를 불러오지 못했습니다.</h1><p className="mt-2 text-sm text-red-600">{error}</p><button onClick={() => window.location.reload()} className="mt-4 underline">다시 시도</button></div></main>
   const shortcutIds = new Set(shortcuts)
   const recommendation = exams.find(exam => shortcutIds.has(exam.subjectId) && exam.status === 'new')
-  return <div className="min-h-screen bg-surface text-ink transition-colors dark:bg-neutral-950 dark:text-neutral-100"><Header page={page} setPage={setPage} dark={dark} setDark={setDark} admin={admin}/>{loading && <div className="fixed left-0 right-0 top-16 z-20 h-0.5 animate-pulse bg-ink dark:bg-white"/>}{error && <div className="mx-auto mt-4 max-w-7xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-100">{error}</div>}{page === 'home' && <HomePage go={go} exams={attemptedExams} recommendation={recommendation} shortcuts={subjects.filter(item => shortcuts.includes(item.id))} displayName={displayName} selectShortcut={selectSubject} openExam={openExam}/>} {page === 'subjects' && <SubjectRequiredPage grouped={grouped} selectSubject={selectSubject}/>} {page === 'list' && (subject ? <ListPage subject={subject} exams={exams.filter(exam => exam.subjectId === subject.id)} openExam={openExam} back={() => go('subjects')}/> : <SubjectRequiredPage grouped={grouped} selectSubject={selectSubject}/>)} {page === 'exam' && selectedExam && <ExamPage key={selectedExam.examSubjectId} user={user} exam={selectedExam} subject={selectedExam.subject} back={() => go('list')} onSaved={updateAttempt}/>} {page === 'settings' && <SettingsPage user={user} subjects={subjects} shortcuts={shortcuts} setShortcuts={setShortcuts} dark={dark} setDark={setDark} googleReauthenticated={googleReauthenticatedForDeletion} clearGoogleReauthentication={() => setGoogleReauthenticatedForDeletion(false)}/>} {page === 'admin' && (admin ? <AdminPage user={user} subjects={subjects} onChanged={reloadExamData}/> : <main className="grid min-h-64 place-items-center text-sm text-red-600">관리자 권한이 없습니다.</main>)}<BottomNav page={page} setPage={setPage}/></div>
+  return <div className="min-h-screen bg-surface text-ink transition-colors dark:bg-neutral-950 dark:text-neutral-100"><Header page={page} setPage={navigate} dark={dark} setDark={setDark} admin={admin}/>{loading && <div className="fixed left-0 right-0 top-16 z-20 h-0.5 animate-pulse bg-ink dark:bg-white"/>}{error && <div className="mx-auto mt-4 max-w-7xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-100">{error}</div>}{page === 'home' && <HomePage go={go} exams={attemptedExams} recommendation={recommendation} shortcuts={subjects.filter(item => shortcuts.includes(item.id))} displayName={displayName} selectShortcut={selectSubject} openExam={openExam}/>} {page === 'subjects' && <SubjectRequiredPage grouped={grouped} selectSubject={selectSubject}/>} {page === 'list' && (subject ? <ListPage subject={subject} exams={exams.filter(exam => exam.subjectId === subject.id)} openExam={openExam} back={() => go('subjects')}/> : <SubjectRequiredPage grouped={grouped} selectSubject={selectSubject}/>)} {page === 'exam' && selectedExam && <ExamPage key={selectedExam.examSubjectId} user={user} exam={selectedExam} subject={selectedExam.subject} back={() => navigate('list', { subjectId: selectedExam.subjectId })} onSaved={updateAttempt}/>} {page === 'settings' && <SettingsPage user={user} subjects={subjects} shortcuts={shortcuts} setShortcuts={setShortcuts} dark={dark} setDark={setDark} googleReauthenticated={googleReauthenticatedForDeletion} clearGoogleReauthentication={() => setGoogleReauthenticatedForDeletion(false)}/>} {page === 'admin' && (admin ? <AdminPage user={user} subjects={subjects} onChanged={reloadExamData}/> : <main className="grid min-h-64 place-items-center text-sm text-red-600">관리자 권한이 없습니다.</main>)}<BottomNav page={page} setPage={navigate}/></div>
 }
 
 export default function App() {
