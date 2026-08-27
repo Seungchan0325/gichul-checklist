@@ -148,6 +148,28 @@ sudo rsync -a --delete dist/ /var/www/gichul-checklist/
 
 서버에서는 `deploy/Caddyfile`을 `/etc/caddy/Caddyfile`로 복사하고, `deploy/caddy.env.example`을 `/etc/gichul-checklist/caddy.env`로 복사해 실제 도메인과 ACME 이메일을 입력합니다. 이어서 systemd override에 `EnvironmentFile=/etc/gichul-checklist/caddy.env`를 설정합니다. Caddy 서버가 80·443 포트를 외부에 제공해야 인증서가 자동 발급됩니다. 배포 전 `sudo caddy validate --config /etc/caddy/Caddyfile`로 설정을 검사합니다.
 
+### GitHub Actions 자동 배포
+
+`.github/workflows/deploy.yml`은 `main` 브랜치에 푸시될 때 테스트와 운영 빌드를 통과한 뒤 개인 서버에 `dist/`를 업로드합니다. 저장소의 `Settings → Secrets and variables → Actions`에 다음 production secrets를 등록합니다.
+
+```text
+VITE_SUPABASE_URL
+VITE_SUPABASE_ANON_KEY
+DEPLOY_HOST
+DEPLOY_USER
+DEPLOY_SSH_KEY
+DEPLOY_KNOWN_HOSTS
+```
+
+서버에서는 배포 사용자가 웹 루트에 파일을 교체할 수 있도록 한 번만 설정합니다. Caddy는 파일을 읽기만 하므로 `deploy` 소유로 두어도 됩니다.
+
+```bash
+sudo install -d -m 755 /var/www/gichul-checklist
+sudo chown -R deploy:deploy /var/www/gichul-checklist
+```
+
+`DEPLOY_SSH_KEY`에는 배포 전용 SSH 개인 키 전체를, `DEPLOY_KNOWN_HOSTS`에는 신뢰할 수 있는 서버에서 확인한 호스트 키 한 줄을 넣습니다. 배포 workflow의 `workflow_dispatch`로 수동 배포도 실행할 수 있습니다. DB 마이그레이션과 Edge Function 배포는 자동 삭제·변경을 방지하기 위해 현재 수동으로 실행합니다.
+
 배포 후 확인 항목:
 
 - 이메일 가입·확인·로그인과 Google 로그인이 동작하는지 확인합니다.
