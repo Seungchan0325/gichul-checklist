@@ -287,7 +287,39 @@ function AuthenticatedApp({ user }: { user: User }) {
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  useEffect(() => { if (!supabase) { setLoading(false); return } supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) }); const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setLoading(false) }); return () => data.subscription.unsubscribe() }, [])
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return }
+    const client = supabase
+    let active = true
+    let initialized = false
+    const { data: authListener } = client.auth.onAuthStateChange((event, nextSession) => {
+      if (!active || (event === 'INITIAL_SESSION' && !initialized)) return
+      setSession(nextSession)
+      setLoading(false)
+    })
+    const restoreSession = async () => {
+      const { data, error } = await client.auth.getSession()
+      if (error) throw error
+      let restored = data.session
+      if (restored) {
+        const expiresSoon = !restored.expires_at || restored.expires_at * 1000 <= Date.now() + 60_000
+        if (expiresSoon) {
+          const refreshed = await client.auth.refreshSession()
+          if (refreshed.error) {
+            await client.auth.signOut({ scope: 'local' })
+            restored = null
+          } else restored = refreshed.data.session
+        }
+      }
+      initialized = true
+      if (active) { setSession(restored); setLoading(false) }
+    }
+    void restoreSession().catch(() => {
+      initialized = true
+      if (active) { setSession(null); setLoading(false) }
+    })
+    return () => { active = false; authListener.subscription.unsubscribe() }
+  }, [])
   if (!supabase) return <ConfigError/>
   if (loading) return <main className="grid min-h-screen place-items-center text-sm text-neutral-500">세션을 확인하는 중…</main>
   return session ? <AuthenticatedApp user={session.user}/> : <AuthPage/>
