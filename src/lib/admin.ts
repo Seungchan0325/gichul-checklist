@@ -68,8 +68,8 @@ export async function closeAnswerKeyReport(user: User, report: AdminAnswerKeyRep
   const notification = await client().functions.invoke('notify-answer-key-report', { body: { reportId: report.id, status } })
   if (notification.error) {
     let detail = notification.error.message
-    const response = 'context' in notification.error ? (notification.error as { context?: Response }).context : undefined
-    if (response) { const body = await response.clone().json().catch(() => null) as { error?: string } | null; if (body?.error) detail = body.error }
+    const response = 'context' in notification.error ? (notification.error as { context?: unknown }).context : undefined
+    if (response && typeof (response as { clone?: unknown }).clone === 'function') { const body = await (response as Response).clone().json().catch(() => null) as { error?: string } | null; if (body?.error) detail = body.error }
     throw new Error(detail)
   }
   if (!notification.data?.sent) throw new Error('제보 처리 메일을 발송하지 못했습니다.')
