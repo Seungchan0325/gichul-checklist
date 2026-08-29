@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(18);
+select plan(26);
 
 select ok(
   exists (select 1 from storage.buckets where id = 'exam-pdfs' and public = false),
@@ -72,10 +72,48 @@ select throws_ok(
   null,
   'a regular user cannot create an exam'
 );
+select lives_ok(
+  $$insert into public.answer_key_reports (exam_subject_id, reporter_user_id, question_number, issue_type, details)
+    values ((select id from public.exam_subjects where status = 'published' order by id limit 1), '10000000-0000-0000-0000-000000000001', 1, 'answer', '정답 확인 요청')$$,
+  'a user can report a published answer key'
+);
+select is((select count(*) from public.answer_key_reports), 1::bigint, 'a user can read their own answer key reports');
+select throws_ok(
+  $$insert into public.answer_key_reports (exam_subject_id, reporter_user_id, question_number, issue_type)
+    values ((select id from public.exam_subjects where status = 'published' order by id limit 1), '20000000-0000-0000-0000-000000000002', 2, 'points')$$,
+  '42501',
+  null,
+  'a user cannot create a report for another user'
+);
+select throws_ok(
+  $$insert into public.answer_key_reports (exam_subject_id, reporter_user_id, question_number, issue_type)
+    values ((select id from public.exam_subjects where status = 'published' order by id limit 1), '10000000-0000-0000-0000-000000000001', 46, 'answer')$$,
+  '42501',
+  null,
+  'a user cannot report a question outside the subject range'
+);
+select throws_ok(
+  $$insert into public.answer_key_reports (exam_subject_id, reporter_user_id, question_number, issue_type)
+    values ((select id from public.exam_subjects where status = 'published' order by id limit 1), '10000000-0000-0000-0000-000000000001', 1, 'both')$$,
+  '23505',
+  null,
+  'a duplicate open report for the same question is rejected'
+);
+select throws_ok(
+  $$update public.answer_key_reports set status = 'resolved'$$,
+  '42501',
+  null,
+  'a regular user cannot resolve a report'
+);
 
 set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000003';
 select is((select public.is_admin()), true, 'an admin membership is recognized');
 select is((select count(*) from public.exams), 11::bigint, 'an admin can read draft and published exams');
+select is((select count(*) from public.answer_key_reports), 1::bigint, 'an admin can read open reports');
+select lives_ok(
+  $$update public.answer_key_reports set status = 'resolved', resolved_by = '30000000-0000-0000-0000-000000000003', resolved_at = now()$$,
+  'an admin can resolve a report'
+);
 select lives_ok(
   $$insert into public.exams (year, month, title) values (2028, 4, '관리자 추가 시험')$$,
   'an admin can create an exam'

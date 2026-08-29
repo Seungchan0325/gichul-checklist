@@ -8,12 +8,17 @@ type Exam = Database['public']['Tables']['exams']['Row']
 type ExamSubject = Database['public']['Tables']['exam_subjects']['Row']
 export type AdminAnswerKey = Pick<Database['public']['Tables']['answer_keys']['Row'], 'question_number' | 'answer' | 'points'>
 export type AdminAuditLog = Database['public']['Tables']['admin_audit_logs']['Row']
+type AnswerKeyReport = Database['public']['Tables']['answer_key_reports']['Row']
 
 export type ManagedExamSubject = ExamSubject & {
   exam: Exam
   subject: Subject
   answerKeys: AdminAnswerKey[]
   attemptCount: number
+}
+
+export type AdminAnswerKeyReport = AnswerKeyReport & {
+  examSubject: { id: number; exam: Exam; subject: Subject }
 }
 
 const client = () => {
@@ -43,6 +48,31 @@ export async function loadAdminAuditLogs(): Promise<AdminAuditLog[]> {
   const result = await client().from('admin_audit_logs').select('*').order('created_at', { ascending: false }).limit(50)
   if (result.error) throw result.error
   return result.data
+}
+
+export async function loadOpenAnswerKeyReports(): Promise<AdminAnswerKeyReport[]> {
+  const result = await client().from('answer_key_reports')
+    .select('*, exam_subjects(id, exams(*), subjects(*))')
+    .eq('status', 'open')
+    .order('created_at', { ascending: true })
+    .limit(100)
+  if (result.error) throw result.error
+  const rows = result.data as unknown as Array<AnswerKeyReport & { exam_subjects: { id: number; exams: Exam; subjects: Subject } }>
+  return rows.map(({ exam_subjects, ...report }) => ({ ...report, examSubject: { id: exam_subjects.id, exam: exam_subjects.exams, subject: exam_subjects.subjects } }))
+}
+
+export async function closeAnswerKeyReport(user: User, report: AdminAnswerKeyReport, status: 'resolved' | 'dismissed') {
+  const result = await client().from('answer_key_reports').update({ status, resolved_by: user.id, resolved_at: new Date().toISOString() }).eq('id', report.id).eq('status', 'open')
+  if (result.error) throw result.error
+  await audit(user.id, `${status}_answer_key_report`, report.examSubject.exam.id, { report_id: report.id, exam_subject_id: report.exam_subject_id, question_number: report.question_number })
+  const notification = await client().functions.invoke('notify-answer-key-report', { body: { reportId: report.id, status } })
+  if (notification.error) {
+    let detail = notification.error.message
+    const response = 'context' in notification.error ? (notification.error as { context?: Response }).context : undefined
+    if (response) { const body = await response.clone().json().catch(() => null) as { error?: string } | null; if (body?.error) detail = body.error }
+    throw new Error(detail)
+  }
+  if (!notification.data?.sent) throw new Error('제보 처리 메일을 발송하지 못했습니다.')
 }
 
 export async function createManagedExamSubject(user: User, values: { year: number; month: number; title: string; isDevelopmentData: boolean; subjectId: number }) {

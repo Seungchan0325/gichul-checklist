@@ -39,3 +39,6 @@ redirect_uri = ""
 
 [functions.delete-account]
 verify_jwt = true
+
+[functions.notify-answer-key-report]
+verify_jwt = true

@@ -18,7 +18,8 @@ insert into public.subjects (id, area, name, question_count, duration_seconds, s
   (33, '제2외국어/한문', '스페인어Ⅰ', 30, 2400, 33), (34, '제2외국어/한문', '중국어Ⅰ', 30, 2400, 34),
   (35, '제2외국어/한문', '일본어Ⅰ', 30, 2400, 35), (36, '제2외국어/한문', '러시아어Ⅰ', 30, 2400, 36),
   (37, '제2외국어/한문', '아랍어Ⅰ', 30, 2400, 37), (38, '제2외국어/한문', '베트남어Ⅰ', 30, 2400, 38),
-  (39, '제2외국어/한문', '한문Ⅰ', 30, 2400, 39);
+  (39, '제2외국어/한문', '한문Ⅰ', 30, 2400, 39)
+on conflict (id) do nothing;
 
 select setval(pg_get_serial_sequence('public.subjects', 'id'), (select max(id) from public.subjects));
 

@@ -128,6 +128,12 @@ supabase secrets set ALLOWED_ORIGIN=https://YOUR_DOMAIN
 npm run functions:deploy
 ```
 
+로컬에서는 별도 설정 없이 Supabase Inbucket(`http://localhost:54324`)으로 제보 처리 결과 메일을 확인할 수 있습니다. 운영에서는 Resend 키와 발신 주소를 Edge Function secret으로 설정합니다.
+
+```bash
+supabase secrets set RESEND_API_KEY=re_xxx REPORT_EMAIL_FROM="기출 체크리스트 <noreply@example.com>"
+```
+
 프런트엔드 배포 환경에는 원격 프로젝트의 URL과 anon key를 설정하고 빌드합니다.
 
 ```bash

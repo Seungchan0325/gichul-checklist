@@ -108,6 +108,56 @@ export type Database = {
           },
         ]
       }
+      answer_key_reports: {
+        Row: {
+          created_at: string
+          details: string
+          exam_subject_id: number
+          id: number
+          issue_type: string
+          question_number: number
+          reporter_user_id: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          details?: string
+          exam_subject_id: number
+          id?: number
+          issue_type: string
+          question_number: number
+          reporter_user_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          details?: string
+          exam_subject_id?: number
+          id?: number
+          issue_type?: string
+          question_number?: number
+          reporter_user_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "answer_key_reports_exam_subject_id_fkey"
+            columns: ["exam_subject_id"]
+            isOneToOne: false
+            referencedRelation: "exam_subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attempts: {
         Row: {
           answers: Json
@@ -467,4 +517,3 @@ export const Constants = {
     },
   },
 } as const
-

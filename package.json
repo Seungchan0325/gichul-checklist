@@ -14,7 +14,7 @@
     "db:test": "supabase test db",
     "db:types": "supabase gen types typescript --local > src/types/database.generated.ts",
     "functions:serve": "supabase functions serve delete-account",
-    "functions:deploy": "supabase functions deploy delete-account"
+    "functions:deploy": "supabase functions deploy delete-account && supabase functions deploy notify-answer-key-report"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.56.0",

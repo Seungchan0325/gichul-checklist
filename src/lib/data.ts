@@ -157,6 +157,25 @@ export async function loadAnswerKeys(examSubjectId: number) {
   return result.data
 }
 
+export type AnswerKeyIssueType = 'answer' | 'points' | 'both' | 'other'
+
+export async function createAnswerKeyReport(userId: string, values: {
+  examSubjectId: number
+  questionNumber: number
+  issueType: AnswerKeyIssueType
+  details: string
+}) {
+  const result = await client().from('answer_key_reports').insert({
+    reporter_user_id: userId,
+    exam_subject_id: values.examSubjectId,
+    question_number: values.questionNumber,
+    issue_type: values.issueType,
+    details: values.details.trim(),
+  })
+  if (result.error?.code === '23505') throw new Error('이 문항에 대해 이미 확인 중인 제보가 있습니다.')
+  if (result.error) throw result.error
+}
+
 
 export async function toggleShortcut(userId: string, subjectId: number, enabled: boolean) {
   const result = enabled
