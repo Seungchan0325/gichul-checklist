@@ -4,7 +4,7 @@ import process from 'node:process'
 import { createClient } from '@supabase/supabase-js'
 
 const DEFAULT_ROOT = '/mnt/c/Users/imcha/Documents/Codex/2026-08-28/plugin-browser-openai-bundled-ebsi-3/outputs'
-const FIRST_YEAR = 2022
+const FIRST_YEAR = 2021
 const LAST_YEAR = 2026
 const MAX_PDF_BYTES = 50 * 1024 * 1024
 const CONCURRENCY = 4
@@ -13,8 +13,25 @@ const args = new Set(process.argv.slice(2))
 const sourceRoot = process.argv.find((value, index) => index > 1 && !value.startsWith('--')) ?? DEFAULT_ROOT
 const apply = args.has('--apply')
 const publish = args.has('--publish')
+const replaceAnswerKeys = args.has('--replace-answer-keys')
+const check = args.has('--check')
+const regradeAttempts = args.has('--regrade-attempts')
+const syncSubjectCatalog = args.has('--sync-subject-catalog')
+const syncExamData = args.has('--sync-exam-data')
 
-const normalize = value => value.replace(/[\s·]/gu, '')
+const standardSubjects = [
+  ['국어', ['화법과 작문', '언어와 매체'], 45, 4800], ['수학', ['확률과 통계', '미적분', '기하'], 30, 6000], ['영어', ['영어'], 45, 4200], ['한국사', ['한국사'], 20, 1800],
+  ['사회탐구', ['생활과 윤리', '윤리와 사상', '한국지리', '세계지리', '동아시아사', '세계사', '정치와 법', '경제', '사회·문화'], 20, 1800],
+  ['과학탐구', ['물리학Ⅰ', '물리학Ⅱ', '화학Ⅰ', '화학Ⅱ', '생명과학Ⅰ', '생명과학Ⅱ', '지구과학Ⅰ', '지구과학Ⅱ'], 20, 1800],
+  ['직업탐구', ['농업 기초 기술', '공업 일반', '상업 경제', '수산·해운 산업 기초', '인간 발달', '성공적인 직업 생활'], 20, 1800],
+  ['제2외국어/한문', ['독일어Ⅰ', '프랑스어Ⅰ', '스페인어Ⅰ', '중국어Ⅰ', '일본어Ⅰ', '러시아어Ⅰ', '아랍어Ⅰ', '베트남어Ⅰ', '한문Ⅰ'], 30, 2400],
+].flatMap(([area, names, question_count, duration_seconds], areaIndex) => names.map((name, nameIndex) => ({ area, name, question_count, duration_seconds, sort_order: areaIndex * 10 + nameIndex + 1 })))
+
+const normalize = value => value
+  .normalize('NFKC')
+  .replace(/II/gu, '2')
+  .replace(/I/gu, '1')
+  .replace(/[\s·]/gu, '')
 const aliasesFor = subject => {
   const aliases = new Set([subject.name, subject.name.replace(/\s/gu, '')])
   if (subject.name === '한문Ⅰ') aliases.add('한문')
@@ -33,17 +50,23 @@ const areaRule = area => {
   return { total: 50, points: [2, 3] }
 }
 const isMathShort = (area, number) => area === '수학' && ((number >= 16 && number <= 22) || number >= 29)
+const acceptedAnswers = answer => answer.split(/[\s,|/]+/u).map(value => value.trim()).filter(Boolean)
+const isCorrect = (answer, key) => {
+  const submitted = String(answer ?? '').trim()
+  return submitted !== '' && acceptedAnswers(key).includes(submitted)
+}
 
 function parseCsv(text, filename) {
   const lines = text.replace(/^\uFEFF/u, '').trim().split(/\r?\n/u).filter(Boolean)
   if (lines[0]?.replace(/[\s"]/gu, '').toLowerCase() === 'question_number,answer,points') lines.shift()
   return lines.map((line, index) => {
-    const columns = line.split(',').map(value => value.trim().replace(/^"|"$/gu, ''))
-    if (columns.length !== 3) throw new Error(`${filename}: CSV ${index + 2}행의 열 개수가 올바르지 않습니다.`)
-    const question_number = Number(columns[0])
-    const points = Number(columns[2])
+    const match = line.match(/^\s*([^,]+)\s*,\s*(?:"([^"]*)"|([^,]*))\s*,\s*([^,]+)\s*$/u)
+    if (!match) throw new Error(`${filename}: CSV ${index + 2}행의 열 개수가 올바르지 않습니다.`)
+    const [, rawQuestionNumber, quotedAnswer, unquotedAnswer, rawPoints] = match
+    const question_number = Number(rawQuestionNumber)
+    const points = Number(rawPoints)
     if (!Number.isInteger(question_number) || !Number.isInteger(points)) throw new Error(`${filename}: CSV ${index + 2}행에 숫자가 아닌 값이 있습니다.`)
-    return { question_number, answer: columns[1], points }
+    return { question_number, answer: (quotedAnswer ?? unquotedAnswer).trim(), points }
   })
 }
 
@@ -54,7 +77,10 @@ function validateRows(subject, rows, filename) {
   for (const row of rows) {
     if (seen.has(row.question_number) || row.question_number < 1 || row.question_number > subject.question_count) throw new Error(`${filename}: 문항 번호가 중복되었거나 범위를 벗어났습니다.`)
     seen.add(row.question_number)
-    const valid = isMathShort(subject.area, row.question_number) ? /^\d{1,3}$/u.test(row.answer) : /^[1-5]$/u.test(row.answer)
+    const answers = acceptedAnswers(row.answer)
+    const valid = isMathShort(subject.area, row.question_number)
+      ? answers.length === 1 && /^\d{1,3}$/u.test(answers[0])
+      : answers.length > 0 && answers.every(answer => /^[1-5]$/u.test(answer)) && new Set(answers).size === answers.length
     if (!valid) throw new Error(`${filename}: ${row.question_number}번 정답 형식이 올바르지 않습니다.`)
     if (!rule.points.includes(row.points)) throw new Error(`${filename}: ${row.question_number}번 배점이 올바르지 않습니다.`)
   }
@@ -82,7 +108,9 @@ function identifyBundle(stem, subjects) {
     const form = rawLabel.endsWith(' 짝수형') ? 'even' : rawLabel.endsWith(' 홀수형') ? 'odd' : null
     const label = rawLabel.replace(/ (?:짝수형|홀수형)$/u, '')
     const subject = subjects.find(item => aliasesFor(item).some(alias => normalize(alias) === normalize(label)))
-    if (subject && (subject.area === rawArea || (rawArea === '제2외국어' && subject.area === '제2외국어/한문'))) return { title, subject, form }
+    // 과목명은 카탈로그에서 유일하다. 자료 제공처와 운영 카탈로그의 영역 표기가 달라도
+    // 과목명을 기준으로 동일 과목을 안전하게 연결한다.
+    if (subject) return { title, subject, form }
   }
 
   for (const subject of subjects) {
@@ -98,6 +126,14 @@ function identifyBundle(stem, subjects) {
     }
   }
   return null
+}
+
+function describeUnmatchedBundle(stem, subjects) {
+  const grouped = stem.match(/^(.*) (국어|수학|영어|한국사|사회탐구|과학탐구|직업탐구|제2외국어)\((.+)\)$/u)
+  if (!grouped) return ''
+  const [, , area, label] = grouped
+  const related = subjects.filter(subject => normalize(subject.name).includes(normalize(label).slice(0, 2)) || normalize(label).includes(normalize(subject.name).slice(0, 2)))
+  return ` (원본: ${area} · ${label}; 운영 후보: ${related.map(subject => `${subject.area} · ${subject.name}`).join(', ') || '없음'})`
 }
 
 async function validatePdf(filename, expectedBytes) {
@@ -129,7 +165,7 @@ async function discoverBundles(subjects) {
       for (const problemFile of problemFiles) {
         const stem = problemFile.slice(0, -' 문제.pdf'.length)
         const identified = identifyBundle(stem, subjects)
-        if (!identified) throw new Error(`과목과 시험명을 판별하지 못했습니다: ${year}/${month}/${problemFile}`)
+        if (!identified) throw new Error(`과목과 시험명을 판별하지 못했습니다: ${year}/${month}/${problemFile}${describeUnmatchedBundle(stem, subjects)}`)
         if (identified.form === 'even') {
           skippedEvenForms += 1
           continue
@@ -188,16 +224,87 @@ async function retry(operation, label, attempts = 3) {
   throw lastError
 }
 
+async function loadAll(db, table, columns) {
+  const rows = []
+  const pageSize = 1000
+  for (let from = 0; ; from += pageSize) {
+    const page = ensure(await db.from(table).select(columns).range(from, from + pageSize - 1))
+    rows.push(...page)
+    if (page.length < pageSize) return rows
+  }
+}
+
+async function regradeAllAttempts(db) {
+  const [attempts, answerKeys] = await Promise.all([
+    loadAll(db, 'attempts', 'id, exam_subject_id, answers, graded_at, score'),
+    loadAll(db, 'answer_keys', 'exam_subject_id, question_number, answer, points'),
+  ])
+  const keysBySubject = new Map()
+  for (const key of answerKeys) keysBySubject.set(key.exam_subject_id, [...(keysBySubject.get(key.exam_subject_id) ?? []), key])
+
+  const graded = attempts.filter(attempt => attempt.graded_at)
+  let updated = 0
+  await mapConcurrent(graded, CONCURRENCY, async attempt => {
+    const keys = keysBySubject.get(attempt.exam_subject_id) ?? []
+    if (!keys.length) throw new Error(`풀이 ${attempt.id}: 정답표를 찾지 못했습니다.`)
+    const answers = attempt.answers && typeof attempt.answers === 'object' && !Array.isArray(attempt.answers) ? attempt.answers : {}
+    const score = keys.reduce((sum, key) => sum + (isCorrect(answers[key.question_number], key.answer) ? key.points : 0), 0)
+    if (attempt.score === score) return
+    ensure(await db.from('attempts').update({ score }).eq('id', attempt.id))
+    updated += 1
+  })
+  console.log(`재채점 완료: 완료된 풀이 ${graded.length}개 중 ${updated}개 점수 갱신, 진행 중 풀이 ${attempts.length - graded.length}개 유지`)
+}
+
+async function syncMissingSubjects(db) {
+  const existing = ensure(await db.from('subjects').select('area, name'))
+  const known = new Set(existing.map(subject => `${subject.area}\u0000${subject.name}`))
+  const missing = standardSubjects.filter(subject => !known.has(`${subject.area}\u0000${subject.name}`))
+  if (!missing.length) { console.log('과목 카탈로그: 이미 최신 상태입니다.'); return }
+  ensure(await db.from('subjects').insert(missing))
+  console.log(`과목 카탈로그 동기화 완료: ${missing.length}개 추가`)
+}
+
 async function uploadBundle(db, exam, bundle) {
   const existing = ensure(await db.from('exam_subjects')
-    .select('id, status, question_pdf_path, explanation_pdf_path, answer_keys(count)')
+    .select('id, status, question_pdf_path, explanation_pdf_path, answer_keys(question_number, answer, points)')
     .eq('exam_id', exam.id)
     .eq('subject_id', bundle.subject.id)
     .maybeSingle())
+  if (replaceAnswerKeys) {
+    if (!existing) throw new Error(`${exam.year}.${exam.month} ${exam.title} · ${bundle.subject.name}: 운영 기출 과목을 찾지 못했습니다.`)
+    const current = [...(existing.answer_keys ?? [])].sort((a, b) => a.question_number - b.question_number)
+    const next = [...bundle.rows].sort((a, b) => a.question_number - b.question_number)
+    const changed = current.length !== next.length || current.some((row, index) => row.question_number !== next[index].question_number || row.answer !== next[index].answer || row.points !== next[index].points)
+    if (!changed) return false
+    if (!check) ensure(await db.from('answer_keys').upsert(next.map(row => ({ ...row, exam_subject_id: existing.id })), { onConflict: 'exam_subject_id,question_number' }))
+    return true
+  }
+  if (syncExamData) {
+    const link = existing ?? ensure(await db.from('exam_subjects').upsert({ exam_id: exam.id, subject_id: bundle.subject.id }, { onConflict: 'exam_id,subject_id' }).select().single())
+    const changed = !existing || answerRowsChanged(existing.answer_keys, bundle.rows)
+    if (changed) ensure(await db.from('answer_keys').upsert(bundle.rows.map(row => ({ ...row, exam_subject_id: link.id })), { onConflict: 'exam_subject_id,question_number' }))
+    const missingPdf = !existing || !existing.question_pdf_path || !existing.explanation_pdf_path
+    const needsPublication = publish && link.status !== 'published'
+    if (missingPdf) {
+      const uploads = [
+        [bundle.problemFile, `exams/${exam.id}/subjects/${bundle.subject.id}/question.pdf`],
+        [bundle.explanationFile, `exams/${exam.id}/subjects/${bundle.subject.id}/explanation.pdf`],
+      ]
+      await Promise.all(uploads.map(async ([filename, storagePath]) => {
+        const body = new Blob([await fs.readFile(path.join(bundle.monthRoot, filename))], { type: 'application/pdf' })
+        ensure(await db.storage.from('exam-pdfs').upload(storagePath, body, { contentType: 'application/pdf', upsert: true }))
+      }))
+      const publication = publish ? { status: 'published', published_at: new Date().toISOString() } : {}
+      ensure(await db.from('exam_subjects').update({ question_pdf_path: uploads[0][1], explanation_pdf_path: uploads[1][1], ...publication }).eq('id', link.id))
+    }
+    if (!missingPdf && needsPublication) ensure(await db.from('exam_subjects').update({ status: 'published', published_at: new Date().toISOString() }).eq('id', link.id))
+    return changed || missingPdf || needsPublication
+  }
   const isComplete = existing
     && existing.question_pdf_path
     && existing.explanation_pdf_path
-    && existing.answer_keys[0]?.count === bundle.rows.length
+    && existing.answer_keys.length === bundle.rows.length
     && (!publish || existing.status === 'published')
   if (isComplete) return false
 
@@ -216,18 +323,32 @@ async function uploadBundle(db, exam, bundle) {
   return true
 }
 
+function answerRowsChanged(current, next) {
+  const before = [...current].sort((a, b) => a.question_number - b.question_number)
+  const after = [...next].sort((a, b) => a.question_number - b.question_number)
+  return before.length !== after.length || before.some((row, index) => row.question_number !== after[index].question_number || row.answer !== after[index].answer || row.points !== after[index].points)
+}
+
 async function main() {
+  if (check && !replaceAnswerKeys) throw new Error('--check는 --replace-answer-keys와 함께 사용해야 합니다.')
+  if (regradeAttempts && (!(replaceAnswerKeys || syncExamData) || !apply || check)) throw new Error('--regrade-attempts는 --apply와 정답 동기화 옵션을 함께 사용해야 합니다.')
+  if (syncSubjectCatalog && !apply) throw new Error('--sync-subject-catalog은 --apply와 함께 사용해야 합니다.')
+  if (syncExamData && !apply) throw new Error('--sync-exam-data는 --apply와 함께 사용해야 합니다.')
   const url = process.env.VITE_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !serviceKey) throw new Error('VITE_SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY를 환경변수로 설정해 주세요.')
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  if (syncSubjectCatalog) {
+    await syncMissingSubjects(db)
+    if (!replaceAnswerKeys) return
+  }
   const subjects = ensure(await db.from('subjects').select('id, area, name, question_count, duration_seconds').order('sort_order'))
   const { exams, skippedEvenForms } = await discoverBundles(subjects)
   const bundleCount = exams.reduce((sum, exam) => sum + exam.bundles.length, 0)
   const answerCount = exams.reduce((sum, exam) => sum + exam.bundles.reduce((subtotal, bundle) => subtotal + bundle.rows.length, 0), 0)
   console.log(`검증 완료: ${exams.length}개 시험, ${bundleCount}개 과목, PDF ${bundleCount * 2}개, 정답 ${answerCount}개`)
   console.log(`수능 짝수형 ${skippedEvenForms}개는 동일 과목 중복을 피하기 위해 제외하고 홀수형을 사용합니다.`)
-  if (!apply) {
+  if (!apply && !check) {
     console.log('dry-run입니다. 실제 업로드는 --apply를 붙여 실행하세요.')
     return
   }
@@ -235,7 +356,11 @@ async function main() {
   let completed = 0
   let skipped = 0
   for (const examData of exams) {
-    const exam = ensure(await db.from('exams').upsert({ year: examData.year, month: examData.month, title: examData.title, is_development_data: false }, { onConflict: 'year,month,title' }).select().single())
+    const examResult = replaceAnswerKeys
+      ? await db.from('exams').select().eq('year', examData.year).eq('month', examData.month).eq('title', examData.title).maybeSingle()
+      : await db.from('exams').upsert({ year: examData.year, month: examData.month, title: examData.title, is_development_data: false }, { onConflict: 'year,month,title' }).select().single()
+    const exam = ensure(examResult)
+    if (!exam) throw new Error(`${examData.year}.${examData.month} ${examData.title}: 운영 시험을 찾지 못했습니다.`)
     await mapConcurrent(examData.bundles, CONCURRENCY, async bundle => {
       const uploaded = await retry(() => uploadBundle(db, exam, bundle), `${examData.year}.${examData.month} ${bundle.subject.name}`)
       completed += 1
@@ -243,7 +368,9 @@ async function main() {
       console.log(`[${completed}/${bundleCount}] ${uploaded ? '업로드' : '기존'} · ${examData.year}.${String(examData.month).padStart(2, '0')} ${examData.title} · ${bundle.subject.name}`)
     })
   }
-  console.log(`업로드 완료: ${exams.length}개 시험, ${bundleCount - skipped}개 신규·갱신, ${skipped}개 기존 (${publish ? '게시' : '초안'})`)
+  if (regradeAttempts) await regradeAllAttempts(db)
+  const action = check ? '정답·배점 대조' : replaceAnswerKeys ? '정답·배점 교체' : syncExamData ? '기출 자료 동기화' : '업로드'
+  console.log(`${action} 완료: ${exams.length}개 시험, ${bundleCount - skipped}개 ${check ? '차이 확인' : replaceAnswerKeys || syncExamData ? '갱신' : '신규·갱신'}, ${skipped}개 기존 (${publish ? '게시' : '초안'})`)
 }
 
 main().catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1 })

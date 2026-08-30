@@ -2,13 +2,16 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import type { Database, Json } from '../types/database.generated'
 import type { Subject } from './data'
-import { isMathShortAnswer, scoreRuleForArea } from './exam'
+import { acceptedAnswers, isMathShortAnswer, scoreRuleForArea } from './exam'
 
 type Exam = Database['public']['Tables']['exams']['Row']
 type ExamSubject = Database['public']['Tables']['exam_subjects']['Row']
 export type AdminAnswerKey = Pick<Database['public']['Tables']['answer_keys']['Row'], 'question_number' | 'answer' | 'points'>
 export type AdminAuditLog = Database['public']['Tables']['admin_audit_logs']['Row']
 type AnswerKeyReport = Database['public']['Tables']['answer_key_reports']['Row']
+type ManagedExamSubjectRow = ExamSubject & { exams: Exam; subjects: Subject; answer_keys: AdminAnswerKey[]; attempts: Array<{ id: string }> }
+
+const examSubjectPageSize = 1000
 
 export type ManagedExamSubject = ExamSubject & {
   exam: Exam
@@ -38,9 +41,18 @@ export async function isAdmin(userId: string) {
 }
 
 export async function loadManagedExamSubjects(): Promise<ManagedExamSubject[]> {
-  const result = await client().from('exam_subjects').select('*, exams(*), subjects(*), answer_keys(question_number, answer, points), attempts(id)').order('updated_at', { ascending: false })
-  if (result.error) throw result.error
-  const rows = result.data as unknown as Array<ExamSubject & { exams: Exam; subjects: Subject; answer_keys: AdminAnswerKey[]; attempts: Array<{ id: string }> }>
+  const rows: ManagedExamSubjectRow[] = []
+  for (let from = 0; ; from += examSubjectPageSize) {
+    const result = await client().from('exam_subjects')
+      .select('*, exams(*), subjects(*), answer_keys(question_number, answer, points), attempts(id)')
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + examSubjectPageSize - 1)
+    if (result.error) throw result.error
+    const page = (result.data ?? []) as unknown as ManagedExamSubjectRow[]
+    rows.push(...page)
+    if (page.length < examSubjectPageSize) break
+  }
   return rows.map(({ exams, subjects, answer_keys, attempts, ...link }) => ({ ...link, exam: exams, subject: subjects, answerKeys: answer_keys.sort((a, b) => a.question_number - b.question_number), attemptCount: attempts.length }))
 }
 
@@ -107,7 +119,10 @@ export function validateAnswerKeys(subject: Subject, rows: AdminAnswerKey[]) {
   const numbers = new Set(rows.map(row => row.question_number))
   if (numbers.size !== subject.question_count || rows.some(row => row.question_number < 1 || row.question_number > subject.question_count)) return '문항 번호가 중복되었거나 범위를 벗어났습니다.'
   for (const row of rows) {
-    const validAnswer = isMathShortAnswer(subject.area, row.question_number) ? /^\d{1,3}$/.test(row.answer) : /^[1-5]$/.test(row.answer)
+    const answers = acceptedAnswers(row.answer)
+    const validAnswer = isMathShortAnswer(subject.area, row.question_number)
+      ? answers.length === 1 && /^\d{1,3}$/.test(answers[0])
+      : answers.length > 0 && answers.every(answer => /^[1-5]$/.test(answer)) && new Set(answers).size === answers.length
     if (!validAnswer) return `${row.question_number}번 정답 형식이 올바르지 않습니다.`
     if (!scoreRule.allowedPoints.includes(row.points)) return `${row.question_number}번 배점은 ${scoreRule.allowedPoints.join('·')}점만 사용할 수 있습니다.`
   }

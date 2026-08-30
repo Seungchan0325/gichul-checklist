@@ -29,6 +29,17 @@ export type BootstrapData = {
   theme: string
 }
 
+type CategorizedExamSubjectLink = {
+  id: number
+  subject_id: number
+  question_pdf_path: string | null
+  explanation_pdf_path: string | null
+  exams: ExamRecord
+  subjects: Subject
+}
+
+const examSubjectPageSize = 1000
+
 const client = () => {
   if (!supabase) throw new Error('Supabase 환경 변수가 설정되지 않았습니다.')
   return supabase
@@ -102,15 +113,13 @@ export async function loadAttemptedExams(userId: string): Promise<AttemptedExamI
 
 export async function loadAllExamSubjects(userId: string): Promise<CategorizedExamItem[]> {
   const db = client()
-  const [linksResult, attemptsResult] = await Promise.all([
-    db.from('exam_subjects').select('id, subject_id, question_pdf_path, explanation_pdf_path, exams(*), subjects(*)'),
+  const [links, attemptsResult] = await Promise.all([
+    loadAllExamSubjectLinks(),
     db.from('attempts').select('*').eq('user_id', userId),
   ])
-  if (linksResult.error) throw linksResult.error
   if (attemptsResult.error) throw attemptsResult.error
 
   const attempts = new Map((attemptsResult.data ?? []).map(attempt => [attempt.exam_subject_id, attempt]))
-  const links = (linksResult.data ?? []) as unknown as Array<{ id: number; subject_id: number; question_pdf_path: string | null; explanation_pdf_path: string | null; exams: ExamRecord; subjects: Subject }>
   return links.flatMap(link => {
     if (!link.exams || !link.subjects) return []
     const attempt = attempts.get(link.id)
@@ -129,6 +138,21 @@ export async function loadAllExamSubjects(userId: string): Promise<CategorizedEx
       attempt,
     }]
   }).sort((a, b) => b.year - a.year || b.month - a.month || a.subject.sort_order - b.subject.sort_order)
+}
+
+async function loadAllExamSubjectLinks(): Promise<CategorizedExamSubjectLink[]> {
+  const db = client()
+  const links: CategorizedExamSubjectLink[] = []
+  for (let from = 0; ; from += examSubjectPageSize) {
+    const result = await db.from('exam_subjects')
+      .select('id, subject_id, question_pdf_path, explanation_pdf_path, exams(*), subjects(*)')
+      .order('id', { ascending: true })
+      .range(from, from + examSubjectPageSize - 1)
+    if (result.error) throw result.error
+    const page = (result.data ?? []) as unknown as CategorizedExamSubjectLink[]
+    links.push(...page)
+    if (page.length < examSubjectPageSize) return links
+  }
 }
 
 export async function saveAttempt(userId: string, examSubjectId: number, values: {

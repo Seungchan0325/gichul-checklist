@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { answeredCount, expectedQuestionCount, getAttemptStatus, isMathShortAnswer, scoreAnswers } from './exam'
+import { answeredCount, expectedQuestionCount, getAttemptStatus, isAnswerCorrect, isMathShortAnswer, scoreAnswers } from './exam'
 
 describe('exam rules', () => {
   it.each([
@@ -28,6 +28,13 @@ describe('grading', () => {
 
   it('정답 문항의 배점만 합산한다', () => {
     expect(scoreAnswers({ 1: 2, 2: '15', 3: 1 }, keys)).toBe(6)
+  })
+
+  it('복수 정답으로 인정된 선택지는 모두 정답 처리한다', () => {
+    const multipleChoiceKey = [{ question_number: 14, answer: '1,2,3,4,5', points: 3 }]
+    expect(scoreAnswers({ 14: 1 }, multipleChoiceKey)).toBe(3)
+    expect(scoreAnswers({ 14: 5 }, multipleChoiceKey)).toBe(3)
+    expect(isAnswerCorrect(3, '1/2/3/4/5')).toBe(true)
   })
 
   it('빈 문자열은 응답한 문항에서 제외한다', () => {

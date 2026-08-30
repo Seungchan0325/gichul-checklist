@@ -20,9 +20,18 @@ export const scoreRuleForArea = (area: string): ScoreRule => {
 export const isMathShortAnswer = (area: string, number: number) =>
   area === '수학' && ((number >= 16 && number <= 22) || number >= 29)
 
+export function acceptedAnswers(answer: string) {
+  return answer.split(/[\s,|/]+/).map(value => value.trim()).filter(Boolean)
+}
+
+export function isAnswerCorrect(answer: AnswerValue | undefined, answerKey: string) {
+  const submitted = String(answer ?? '').trim()
+  return submitted !== '' && acceptedAnswers(answerKey).includes(submitted)
+}
+
 export function scoreAnswers(answers: AnswerMap, answerKeys: AnswerKey[]) {
   return answerKeys.reduce((score, key) => (
-    String(answers[key.question_number] ?? '').trim() === key.answer.trim()
+    isAnswerCorrect(answers[key.question_number], key.answer)
       ? score + key.points
       : score
   ), 0)
