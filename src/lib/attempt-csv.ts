@@ -1,4 +1,5 @@
 import { isAnswerCorrect, type AnswerKey, type AnswerMap } from './exam'
+import { createDownloadFileName } from './download-file-name'
 
 type AttemptCsvInput = {
   year: number
@@ -26,8 +27,5 @@ export function createAttemptCsv(input: AttemptCsvInput) {
 }
 
 export function attemptCsvFileName(input: Pick<AttemptCsvInput, 'year' | 'month' | 'title' | 'subjectName' | 'roundNumber'>) {
-  const safe = `${input.year}-${String(input.month).padStart(2, '0')}_${input.title}_${input.subjectName}_${input.roundNumber}회독`
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/\s+/g, '_')
-  return `${safe}.csv`
+  return createDownloadFileName({ ...input, kind: '정오분석', extension: 'csv' })
 }

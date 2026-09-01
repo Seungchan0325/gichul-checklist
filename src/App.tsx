@@ -4,6 +4,7 @@ import { BookOpen, Check, CircleX, Clock3, Download, Home, LogOut, Menu, Moon, P
 import { supabase } from './lib/supabase'
 import { acceptedAnswers, answeredCount, getAttemptStatus, isAnswerCorrect, isMathShortAnswer, parseAnswers, scoreAnswers, type AnswerKey, type AnswerMap } from './lib/exam'
 import { attemptCsvFileName, createAttemptCsv } from './lib/attempt-csv'
+import { createDownloadFileName, type DownloadKind } from './lib/download-file-name'
 import { createAnswerKeyReport, createExamPdfUrl, deleteAccount, loadAllExamSubjects, loadAnswerKeys, loadAttemptedExams, loadAttemptHistory, loadBootstrap, saveAttempt, saveTheme, startNextAttemptRound, toggleShortcut, type AnswerKeyIssueType, type Attempt, type AttemptedExamItem, type CategorizedExamItem, type ExamListItem, type Subject } from './lib/data'
 import { isAdmin as checkIsAdmin } from './lib/admin'
 import { searchExamItems } from './lib/search'
@@ -281,6 +282,7 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
   const [viewingAttempt, setViewingAttempt] = useState<Attempt | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [busy, setBusy] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState<DownloadKind | null>(null)
   const [error, setError] = useState('')
   const [reportOpen, setReportOpen] = useState(false)
   const [reportSubmitted, setReportSubmitted] = useState(false)
@@ -372,12 +374,20 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
     } catch (value) { setError(value instanceof Error ? value.message : '다음 회독을 시작하지 못했습니다.') }
     finally { setBusy(false) }
   }
-  const openPdf = async (path: string) => {
-    const pdfWindow = window.open('', '_blank')
-    if (!pdfWindow) { setError('새 창을 열지 못했습니다. 브라우저의 팝업 차단을 해제한 뒤 다시 시도해 주세요.'); return }
-    pdfWindow.opener = null
-    try { pdfWindow.location.href = await createExamPdfUrl(path) }
-    catch (value) { pdfWindow.close(); setError(value instanceof Error ? value.message : 'PDF를 열지 못했습니다.') }
+  const downloadPdf = async (path: string, kind: DownloadKind) => {
+    const fileName = createDownloadFileName({ year: exam.year, month: exam.month, title: exam.title, subjectName: subject.name, kind, extension: 'pdf' })
+    setDownloadingPdf(kind); setError('')
+    try {
+      const response = await fetch(await createExamPdfUrl(path))
+      if (!response.ok) throw new Error('PDF를 다운로드하지 못했습니다.')
+      const objectUrl = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = fileName
+      document.body.append(link); link.click(); link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+    } catch (value) { setError(value instanceof Error ? value.message : 'PDF를 다운로드하지 못했습니다.') }
+    finally { setDownloadingPdf(null) }
   }
   const exportCsv = () => {
     if (!keys.length) { setError('정답표를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.'); return }
@@ -395,7 +405,7 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
   return <main className="mx-auto max-w-7xl px-4 pb-24 pt-6 sm:px-6 sm:pt-10">
     <div className="mb-7 flex flex-col justify-between gap-5 border-b border-line pb-6 dark:border-neutral-800 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-neutral-500">{subject.name} · <span className="text-ink dark:text-white">{isViewingHistory ? `${viewingAttempt.round_number}회독 기록` : `${roundNumber}회독`}</span></p><h1 className="mt-1 text-2xl font-bold sm:text-3xl">{exam.year}년 {exam.month}월 {exam.title}</h1></div>{isViewingHistory ? <div className="text-sm font-semibold text-neutral-500">남은 시간 {formattedTime}</div> : <Timer seconds={seconds} running={running} initialSeconds={subject.duration_seconds} onSeconds={setSeconds} onRunning={value => { setRunning(value); if (value) { timerStartedRef.current = true; void persist({ timerStarted: true, force: true }) } else void persist() }} onReset={() => { setRunning(false); secondsRef.current = subject.duration_seconds; setSeconds(subject.duration_seconds); if (!gradedRef.current && !answeredCount(answersRef.current)) { timerStartedRef.current = false; void persist({ graded: false, score: null, timerStarted: false, force: true }) } else void persist() }}/>}</div>
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]"><section className="min-w-0"><div className="mb-5 flex items-end justify-between"><div><h2 className="text-xl font-bold">OMR 답안</h2><p className="mt-1 text-sm text-neutral-500">{isViewingHistory ? '이전 회독의 읽기 전용 기록입니다.' : '문항별 답을 선택하면 자동 저장됩니다.'}</p></div><div className="text-right"><span className="text-sm font-semibold">{count}/{subject.question_count}</span>{!isViewingHistory && <p className={cn('mt-1 text-xs', saveState === 'error' ? 'text-red-600' : 'text-neutral-400')}>{saveState === 'saving' ? '저장 중…' : saveState === 'saved' ? '저장됨' : saveState === 'error' ? '저장 실패' : ''}</p>}</div></div><OmrGrid subject={subject} answers={displayedAnswers} setAnswers={setAnswers} graded={displayedGraded} answerKeys={keyMap} readOnly={isViewingHistory}/></section>
-      <aside className="lg:sticky lg:top-24 lg:self-start"><div className="border-y border-line py-5 dark:border-neutral-800"><h3 className="font-bold">시험 자료</h3>{exam.question_pdf_path && <button onClick={() => void openPdf(exam.question_pdf_path!)} className="mt-4 flex w-full items-center justify-between py-2 text-left text-sm font-semibold">기출문제 PDF <Download size={16}/></button>}{exam.explanation_pdf_path && <button onClick={() => void openPdf(exam.explanation_pdf_path!)} className="flex w-full items-center justify-between py-2 text-left text-sm font-semibold">정답 및 해설 <Download size={16}/></button>}</div>
+      <aside className="lg:sticky lg:top-24 lg:self-start"><div className="border-y border-line py-5 dark:border-neutral-800"><h3 className="font-bold">시험 자료</h3>{exam.question_pdf_path && <button disabled={downloadingPdf !== null} onClick={() => void downloadPdf(exam.question_pdf_path!, '문제')} className="mt-4 flex w-full items-center justify-between py-2 text-left text-sm font-semibold disabled:opacity-40">{downloadingPdf === '문제' ? '문제 PDF 준비 중…' : '기출문제 PDF'} <Download size={16}/></button>}{exam.explanation_pdf_path && <button disabled={downloadingPdf !== null} onClick={() => void downloadPdf(exam.explanation_pdf_path!, '정답및해설')} className="flex w-full items-center justify-between py-2 text-left text-sm font-semibold disabled:opacity-40">{downloadingPdf === '정답및해설' ? '해설 PDF 준비 중…' : '정답 및 해설'} <Download size={16}/></button>}</div>
       {displayedGraded && displayedScore !== null && <div className="mt-5 bg-green-50 p-5 text-green-950 dark:bg-green-950 dark:text-green-100"><p className="text-sm font-bold">{isViewingHistory ? `${viewingAttempt.round_number}회독 채점 결과` : '채점 완료'}</p><p className="mt-2 text-3xl font-bold">{displayedScore}점</p></div>}
       <div className="mt-5 border-y border-line py-4 dark:border-neutral-800"><div className="flex items-center justify-between"><h3 className="font-bold">회독 기록</h3><span className="text-xs text-neutral-500">완료 {history.length}회</span></div>{history.length ? <div className="mt-3 space-y-1">{history.map(attempt => <button key={attempt.id} onClick={() => { setRunning(false); setViewingAttempt(attempt) }} className={cn('flex w-full items-center justify-between px-2 py-2 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900', viewingAttempt?.id === attempt.id && 'bg-neutral-100 dark:bg-neutral-900')}><span className="font-semibold">{attempt.round_number}회독</span><span className="text-right"><b>{attempt.score ?? '-'}점</b><small className="mt-0.5 block text-xs text-neutral-500">{attempt.graded_at ? new Date(attempt.graded_at).toLocaleDateString('ko-KR') : ''}</small></span></button>)}</div> : <p className="mt-3 text-sm text-neutral-500">완료된 회독이 아직 없습니다.</p>}</div>
       <button onClick={exportCsv} disabled={!keys.length} className="mt-5 flex h-11 w-full items-center justify-center gap-2 border border-line text-sm font-bold disabled:opacity-40 dark:border-neutral-700"><Download size={15}/>정오 CSV 내보내기</button>{isViewingHistory ? <button onClick={() => setViewingAttempt(null)} className="mt-2 h-11 w-full border border-line text-sm font-bold dark:border-neutral-700">현재 {roundNumber}회독으로 돌아가기</button> : <><button onClick={grade} disabled={!keys.length || busy} className="mt-5 h-12 w-full bg-ink font-bold text-white disabled:opacity-30 dark:bg-white dark:text-black">채점하기</button>{graded && <button onClick={() => void beginNextRound()} disabled={busy} className="mt-2 h-11 w-full border border-green-600 text-sm font-bold text-green-700 disabled:opacity-40 dark:border-green-400 dark:text-green-300">{busy ? '다음 회독 준비 중…' : `${roundNumber + 1}회독 시작`}</button>}<button onClick={() => void resetExam()} disabled={busy} className="mt-2 flex h-11 w-full items-center justify-center gap-2 border border-line text-sm font-semibold text-neutral-600 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300"><RotateCcw size={15}/>{busy ? '처리 중…' : '현재 회독 초기화'}</button></>}

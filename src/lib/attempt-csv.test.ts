@@ -33,6 +33,6 @@ describe('attempt CSV', () => {
   })
 
   it('파일명에 사용할 수 없는 문자를 제거한다', () => {
-    expect(attemptCsvFileName({ ...input, title: '3/6: 모평?' })).toBe('2022-03_3_6__모평__물리학Ⅰ_2회독.csv')
+    expect(attemptCsvFileName({ ...input, title: '3/6: 모평?' })).toBe('2022-03_3_6__모평__물리학Ⅰ_2회독_정오분석.csv')
   })
 })
