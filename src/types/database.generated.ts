@@ -165,7 +165,9 @@ export type Database = {
           exam_subject_id: number
           graded_at: string | null
           id: string
+          is_current: boolean
           remaining_seconds: number | null
+          round_number: number
           score: number | null
           status: Database["public"]["Enums"]["attempt_status"]
           updated_at: string
@@ -177,7 +179,9 @@ export type Database = {
           exam_subject_id: number
           graded_at?: string | null
           id?: string
+          is_current?: boolean
           remaining_seconds?: number | null
+          round_number?: number
           score?: number | null
           status?: Database["public"]["Enums"]["attempt_status"]
           updated_at?: string
@@ -189,7 +193,9 @@ export type Database = {
           exam_subject_id?: number
           graded_at?: string | null
           id?: string
+          is_current?: boolean
           remaining_seconds?: number | null
+          round_number?: number
           score?: number | null
           status?: Database["public"]["Enums"]["attempt_status"]
           updated_at?: string
@@ -378,6 +384,10 @@ export type Database = {
     }
     Functions: {
       is_admin: { Args: never; Returns: boolean }
+      start_next_attempt_round: {
+        Args: { p_exam_subject_id: number }
+        Returns: Database['public']['Tables']['attempts']['Row']
+      }
     }
     Enums: {
       attempt_status: "new" | "doing" | "done"

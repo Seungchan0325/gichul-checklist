@@ -67,7 +67,7 @@ export async function loadExamsForSubject(userId: string, subjectId: number) {
   const db = client()
   const [linksResult, attemptsResult] = await Promise.all([
     db.from('exam_subjects').select('id, exam_id, subject_id, question_pdf_path, explanation_pdf_path, exams(*)').eq('subject_id', subjectId),
-    db.from('attempts').select('*').eq('user_id', userId),
+    db.from('attempts').select('*').eq('user_id', userId).eq('is_current', true),
   ])
   if (linksResult.error) throw linksResult.error
   if (attemptsResult.error) throw attemptsResult.error
@@ -85,6 +85,7 @@ export async function loadAttemptedExams(userId: string): Promise<AttemptedExamI
     .from('attempts')
     .select('*, exam_subjects(id, subject_id, question_pdf_path, explanation_pdf_path, exams(*), subjects(*))')
     .eq('user_id', userId)
+    .eq('is_current', true)
     .order('updated_at', { ascending: false })
   if (result.error) throw result.error
 
@@ -115,7 +116,7 @@ export async function loadAllExamSubjects(userId: string): Promise<CategorizedEx
   const db = client()
   const [links, attemptsResult] = await Promise.all([
     loadAllExamSubjectLinks(),
-    db.from('attempts').select('*').eq('user_id', userId),
+    db.from('attempts').select('*').eq('user_id', userId).eq('is_current', true),
   ])
   if (attemptsResult.error) throw attemptsResult.error
 
@@ -155,22 +156,45 @@ async function loadAllExamSubjectLinks(): Promise<CategorizedExamSubjectLink[]> 
   }
 }
 
-export async function saveAttempt(userId: string, examSubjectId: number, values: {
+type AttemptValues = {
   answers: AnswerMap
   status: 'new' | 'doing' | 'done'
   score?: number | null
   remainingSeconds?: number | null
   gradedAt?: string | null
-}) {
+}
+
+export async function saveAttempt(userId: string, examSubjectId: number, roundNumber: number, values: AttemptValues): Promise<Attempt>
+export async function saveAttempt(userId: string, examSubjectId: number, values: AttemptValues): Promise<Attempt>
+export async function saveAttempt(userId: string, examSubjectId: number, roundNumberOrValues: number | AttemptValues, maybeValues?: AttemptValues) {
+  const roundNumber = typeof roundNumberOrValues === 'number' ? roundNumberOrValues : 1
+  const values = typeof roundNumberOrValues === 'number' ? maybeValues! : roundNumberOrValues
   const result = await client().from('attempts').upsert({
     user_id: userId,
     exam_subject_id: examSubjectId,
+    round_number: roundNumber,
     answers: values.answers as unknown as Json,
     status: values.status,
     ...(values.score !== undefined ? { score: values.score } : {}),
     ...(values.remainingSeconds !== undefined ? { remaining_seconds: values.remainingSeconds } : {}),
     ...(values.gradedAt !== undefined ? { graded_at: values.gradedAt } : {}),
-  }, { onConflict: 'user_id,exam_subject_id' }).select().single()
+  }, { onConflict: 'user_id,exam_subject_id,round_number' }).select().single()
+  if (result.error) throw result.error
+  return result.data
+}
+
+export async function loadAttemptHistory(userId: string, examSubjectId: number): Promise<Attempt[]> {
+  const result = await client().from('attempts').select('*')
+    .eq('user_id', userId)
+    .eq('exam_subject_id', examSubjectId)
+    .eq('is_current', false)
+    .order('round_number', { ascending: false })
+  if (result.error) throw result.error
+  return result.data ?? []
+}
+
+export async function startNextAttemptRound(examSubjectId: number): Promise<Attempt> {
+  const result = await client().rpc('start_next_attempt_round', { p_exam_subject_id: examSubjectId })
   if (result.error) throw result.error
   return result.data
 }

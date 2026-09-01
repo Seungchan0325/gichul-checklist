@@ -3,7 +3,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { BookOpen, Check, CircleX, Clock3, Download, Home, LogOut, Menu, Moon, Pause, Play, RotateCcw, Search, Settings, Sun, Trash2, X } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { acceptedAnswers, answeredCount, getAttemptStatus, isAnswerCorrect, isMathShortAnswer, parseAnswers, scoreAnswers, type AnswerKey, type AnswerMap } from './lib/exam'
-import { createAnswerKeyReport, createExamPdfUrl, deleteAccount, loadAllExamSubjects, loadAnswerKeys, loadAttemptedExams, loadBootstrap, saveAttempt, saveTheme, toggleShortcut, type AnswerKeyIssueType, type AttemptedExamItem, type CategorizedExamItem, type ExamListItem, type Subject } from './lib/data'
+import { createAnswerKeyReport, createExamPdfUrl, deleteAccount, loadAllExamSubjects, loadAnswerKeys, loadAttemptedExams, loadAttemptHistory, loadBootstrap, saveAttempt, saveTheme, startNextAttemptRound, toggleShortcut, type AnswerKeyIssueType, type Attempt, type AttemptedExamItem, type CategorizedExamItem, type ExamListItem, type Subject } from './lib/data'
 import { isAdmin as checkIsAdmin } from './lib/admin'
 import { searchExamItems } from './lib/search'
 import AdminPage from './AdminPage'
@@ -83,8 +83,12 @@ function Header({ page, setPage, dark, setDark, admin, searchQuery, onSearch }: 
 
 function SectionTitle({ eyebrow, title, action }: { eyebrow?: string; title: string; action?: () => void }) { return <div className="mb-4 flex items-end justify-between"><div>{eyebrow && <p className="mb-1 text-xs font-bold text-neutral-500">{eyebrow}</p>}<h2 className="text-xl font-bold tracking-tight sm:text-2xl">{title}</h2></div>{action && <button onClick={action} className="text-sm font-semibold underline underline-offset-4">전체보기</button>}</div> }
 
+function roundLabel(exam: ExamListItem) {
+  return exam.attempt ? `${exam.attempt.round_number}회독` : ''
+}
+
 function ExamRow({ exam, onClick, compact = false }: { exam: ExamListItem; onClick: () => void; compact?: boolean }) {
-  return <button onClick={onClick} className={cn('group flex w-full items-center border-t border-line text-left transition hover:bg-neutral-100/70 dark:border-neutral-800 dark:hover:bg-neutral-900', compact ? 'py-3' : 'py-4 sm:py-5')}><div className={cn('mr-3 h-9 w-1 shrink-0', exam.status === 'done' ? 'bg-green-500' : exam.status === 'doing' ? 'bg-orange-400' : 'bg-neutral-200 dark:bg-neutral-700')}/><div className="min-w-0 flex-1"><p className="truncate font-semibold">{exam.year}년 {exam.month}월</p><p className="mt-0.5 truncate text-sm text-neutral-500">{exam.subjectName ? `${exam.subjectName} · ` : ''}{exam.title}</p></div>{exam.score !== undefined && <div className="ml-3 text-right"><b className="text-lg tabular-nums">{exam.score}</b><span className="text-xs text-neutral-500">점</span><p className="text-xs text-neutral-400">{exam.progress}문항</p></div>}</button>
+  return <button onClick={onClick} className={cn('group flex w-full items-center border-t border-line text-left transition hover:bg-neutral-100/70 dark:border-neutral-800 dark:hover:bg-neutral-900', compact ? 'py-3' : 'py-4 sm:py-5')}><div className={cn('mr-3 h-9 w-1 shrink-0', exam.status === 'done' ? 'bg-green-500' : exam.status === 'doing' ? 'bg-orange-400' : 'bg-neutral-200 dark:bg-neutral-700')}/><div className="min-w-0 flex-1"><p className="truncate font-semibold">{exam.year}년 {exam.month}월</p><p className="mt-0.5 truncate text-sm text-neutral-500">{exam.subjectName ? `${exam.subjectName} · ` : ''}{exam.title}{roundLabel(exam) ? ` · ${roundLabel(exam)}` : ''}</p></div>{exam.score !== undefined && <div className="ml-3 text-right"><b className="text-lg tabular-nums">{exam.score}</b><span className="text-xs text-neutral-500">점</span><p className="text-xs text-neutral-400">{exam.progress}문항</p></div>}</button>
 }
 
 function HomePage({ go, exams, recommendation, shortcuts, displayName, selectShortcut, openExam }: { go: (page: Page, exam?: ExamListItem) => void; exams: AttemptedExamItem[]; recommendation?: CategorizedExamItem; shortcuts: Subject[]; displayName: string; selectShortcut: (subject: Subject) => void; openExam: (exam: CategorizedExamItem) => void }) {
@@ -93,9 +97,14 @@ function HomePage({ go, exams, recommendation, shortcuts, displayName, selectSho
   return <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12"><div className="mb-12 max-w-2xl"><p className="mb-2 text-sm font-semibold text-neutral-500">안녕하세요, {displayName}님</p><h1 className="text-3xl font-bold leading-tight tracking-[-0.04em] sm:text-4xl">오늘도 한 회씩,<br/>차근차근 풀어보세요.</h1></div><section className="mb-12"><SectionTitle eyebrow="내 과목" title="바로가기"/><div className={cn('grid gap-px border border-line bg-line dark:border-neutral-800 dark:bg-neutral-800', shortcuts.length ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1')}>{shortcuts.length ? shortcuts.map(item => <button key={item.id} onClick={() => selectShortcut(item)} className="flex min-h-24 flex-col justify-between bg-surface p-4 text-left hover:bg-neutral-100 dark:bg-neutral-950 dark:hover:bg-neutral-900"><BookOpen size={18}/><span className="font-bold">{item.name}</span></button>) : <p className="bg-surface p-5 text-sm text-neutral-500 dark:bg-neutral-950">설정에서 자주 풀 과목을 추가하면 바로가기가 표시됩니다.</p>}</div></section><div className="grid gap-12 lg:grid-cols-[1.25fr_0.75fr]"><section><SectionTitle title="풀고 있는 기출" action={() => go('subjects')}/>{doing.length ? doing.map(exam => <ExamRow key={exam.examSubjectId} exam={exam} onClick={() => openExam(exam)}/>) : <p className="border-t border-line py-6 text-sm text-neutral-500 dark:border-neutral-800">진행 중인 시험이 없습니다.</p>}</section><section><SectionTitle title="최근 풀었던 기출"/>{done.length ? done.map(exam => <ExamRow compact key={exam.examSubjectId} exam={exam} onClick={() => openExam(exam)}/>) : <p className="border-t border-line py-6 text-sm text-neutral-500 dark:border-neutral-800">채점 완료 기록이 없습니다.</p>}</section></div>{recommendation && <section className="mt-12 border-y border-line py-7 dark:border-neutral-800"><p className="text-xs font-bold text-neutral-500">기출 추천</p><div className="mt-2 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-neutral-500">{recommendation.subject.area === recommendation.subject.name ? recommendation.subject.area : `${recommendation.subject.area}(${recommendation.subject.name})`}</p><h2 className="mt-1 text-xl font-bold">{recommendation.year}년 {recommendation.month}월 {recommendation.title}</h2><p className="mt-1 text-sm text-neutral-500">아직 풀지 않은 기출입니다.</p></div><button onClick={() => openExam(recommendation)} className="h-11 bg-ink px-5 text-sm font-bold text-white dark:bg-white dark:text-black">풀어보기</button></div></section>}</main>
 }
 
-function ListPage({ subject, exams, openExam }: { subject: Subject; exams: CategorizedExamItem[]; openExam: (exam: CategorizedExamItem) => void }) {
+function LegacyListPage({ subject, exams, openExam }: { subject: Subject; exams: CategorizedExamItem[]; openExam: (exam: CategorizedExamItem) => void }) {
   const years = useMemo(() => [...new Set(exams.map(exam => exam.year))].sort((a, b) => b - a), [exams])
   return <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12"><div className="mb-8"><p className="mb-2 text-sm font-semibold text-neutral-500">{subject.area}</p><h1 className="text-3xl font-bold tracking-tight">{subject.name} 기출</h1></div><div className="space-y-10">{years.map(year => <section key={year}><h2 className="mb-3 text-lg font-bold">{year}년</h2><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{exams.filter(exam => exam.year === year).sort((a, b) => a.month - b.month).map(exam => <button key={exam.examSubjectId} onClick={() => openExam(exam)} className={cn('relative min-h-32 border p-4 text-left transition-colors hover:border-neutral-400 sm:min-h-36', exam.status === 'done' ? 'border-green-300 bg-done text-green-950' : exam.status === 'doing' ? 'border-orange-300 bg-doing text-orange-950' : 'border-line bg-white dark:border-neutral-700 dark:bg-neutral-950 dark:text-white')}><p className="text-2xl font-bold">{exam.month}월</p><p className="mt-1 text-xs opacity-65">{exam.title}</p>{exam.score !== undefined && <div className="absolute bottom-3 right-3"><b className="text-xl">{exam.score}</b><span className="text-xs">점</span></div>}<span className="absolute bottom-4 left-4 text-xs font-semibold">{exam.status === 'done' ? '완료' : exam.status === 'doing' ? '진행 중' : '미응시'}</span></button>)}</div></section>)}</div></main>
+}
+
+function ListPage({ subject, exams, openExam }: { subject: Subject; exams: CategorizedExamItem[]; openExam: (exam: CategorizedExamItem) => void }) {
+  const years = useMemo(() => [...new Set(exams.map(exam => exam.year))].sort((a, b) => b - a), [exams])
+  return <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12"><div className="mb-8"><p className="mb-2 text-sm font-semibold text-neutral-500">{subject.area}</p><h1 className="text-3xl font-bold tracking-tight">{subject.name} 기출</h1></div><div className="space-y-10">{years.map(year => <section key={year}><h2 className="mb-3 text-lg font-bold">{year}년</h2><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{exams.filter(exam => exam.year === year).sort((a, b) => a.month - b.month).map(exam => <button key={exam.examSubjectId} onClick={() => openExam(exam)} className={cn('relative min-h-32 border p-4 text-left transition-colors hover:border-neutral-400 sm:min-h-36', exam.status === 'done' ? 'border-green-300 bg-done text-green-950' : exam.status === 'doing' ? 'border-orange-300 bg-doing text-orange-950' : 'border-line bg-white dark:border-neutral-700 dark:bg-neutral-950 dark:text-white')}><p className="text-2xl font-bold">{exam.month}월</p><p className="mt-1 text-xs opacity-65">{exam.title}</p>{exam.score !== undefined && <div className="absolute bottom-3 right-3"><b className="text-xl">{exam.score}</b><span className="text-xs">점</span></div>}<span className="absolute bottom-4 left-4 text-xs font-semibold">{exam.status === 'done' ? `${roundLabel(exam)} 완료` : exam.status === 'doing' ? `${roundLabel(exam)} 진행 중` : exam.attempt ? `${roundLabel(exam)} 시작 전` : '미응시'}</span></button>)}</div></section>)}</div></main>
 }
 
 function SubjectRequiredPage({ grouped, selectSubject }: { grouped: Map<string, Subject[]>; selectSubject: (subject: Subject) => void }) {
@@ -119,7 +128,7 @@ function Timer({ seconds, running, initialSeconds, onSeconds, onRunning, onReset
   return <div className={cn('flex items-center gap-3 transition-colors', warning && 'rounded-md px-2 py-1')}><Clock3 size={18} className={warningColor}/><span aria-live="polite" className={cn('font-mono text-xl font-bold tabular-nums', warningColor)}>{formatted}</span><button onClick={() => onRunning(!running)} disabled={!seconds} className="grid size-9 place-items-center border border-line disabled:opacity-40 dark:border-neutral-700" aria-label={running ? '일시정지' : '시작'}>{running ? <Pause size={15}/> : <Play size={15}/>}</button><button onClick={onReset} className="grid size-9 place-items-center text-neutral-500" aria-label="초기화"><RotateCcw size={15}/></button></div>
 }
 
-function OmrGrid({ subject, answers, setAnswers, graded, answerKeys }: { subject: Subject; answers: AnswerMap; setAnswers: Dispatch<SetStateAction<AnswerMap>>; graded: boolean; answerKeys: Map<number, string> }) {
+function OmrGrid({ subject, answers, setAnswers, graded, answerKeys, readOnly = false }: { subject: Subject; answers: AnswerMap; setAnswers: Dispatch<SetStateAction<AnswerMap>>; graded: boolean; answerKeys: Map<number, string>; readOnly?: boolean }) {
   const questionsPerTable = subject.question_count === 45 ? 15 : 10
   const tableCount = Math.ceil(subject.question_count / questionsPerTable)
   const setAnswer = (number: number, answer: string | number) => setAnswers(current => ({ ...current, [number]: answer }))
@@ -144,7 +153,7 @@ function OmrGrid({ subject, answers, setAnswers, graded, answerKeys }: { subject
             : number === last ? 'border-b-0' : 'border-b border-line dark:border-neutral-800'
           return <div key={number} className={cn('flex h-9 items-center px-1', rowBorder)}>
             <span className="w-8 text-center text-xs font-bold">{number}</span>
-            {short ? <div className="flex flex-1 items-center justify-center gap-2"><input aria-label={`${number}번 단답형 답안`} inputMode="numeric" maxLength={3} value={typeof answers[number] === 'string' ? answers[number] : ''} onChange={event => setAnswer(number, event.target.value.replace(/\D/g, ''))} className={cn('h-7 w-20 border bg-transparent px-2 text-center text-xs font-bold', graded ? isCorrect ? 'border-green-600 text-green-700 dark:border-green-400 dark:text-green-300' : 'border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : 'border-neutral-300 dark:border-neutral-700')} placeholder="정답"/>{graded && correctAnswer ? <span aria-label={`${number}번 정답 ${correctAnswer}`} className="grid h-7 min-w-12 place-items-center border border-green-600 bg-green-600 px-2 text-xs font-bold text-white dark:border-green-400 dark:bg-green-400 dark:text-green-950">{correctAnswer}</span> : null}</div> : <div className="grid flex-1 grid-cols-5 place-items-center gap-1 px-1">{[1, 2, 3, 4, 5].map(value => <button key={value} onClick={() => setAnswer(number, value)} className={cn('grid size-7 place-items-center rounded-full border text-xs font-semibold', graded && accepted.includes(String(value)) ? 'border-green-600 bg-green-600 text-white dark:border-green-400 dark:bg-green-400 dark:text-green-950' : graded && answers[number] === value ? 'border-red-500 bg-red-500 text-white dark:border-red-400 dark:bg-red-400 dark:text-red-950' : answers[number] === value ? 'border-ink bg-ink text-white dark:border-white dark:bg-white dark:text-black' : 'border-neutral-300 dark:border-neutral-700')}>{value}</button>)}</div>}
+            {short ? <div className="flex flex-1 items-center justify-center gap-2"><input aria-label={`${number}번 단답형 답안`} disabled={readOnly} inputMode="numeric" maxLength={3} value={typeof answers[number] === 'string' ? answers[number] : ''} onChange={event => setAnswer(number, event.target.value.replace(/\D/g, ''))} className={cn('h-7 w-20 border bg-transparent px-2 text-center text-xs font-bold disabled:cursor-default', graded ? isCorrect ? 'border-green-600 text-green-700 dark:border-green-400 dark:text-green-300' : 'border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : 'border-neutral-300 dark:border-neutral-700')} placeholder="정답"/>{graded && correctAnswer ? <span aria-label={`${number}번 정답 ${correctAnswer}`} className="grid h-7 min-w-12 place-items-center border border-green-600 bg-green-600 px-2 text-xs font-bold text-white dark:border-green-400 dark:bg-green-400 dark:text-green-950">{correctAnswer}</span> : null}</div> : <div className="grid flex-1 grid-cols-5 place-items-center gap-1 px-1">{[1, 2, 3, 4, 5].map(value => <button key={value} disabled={readOnly} onClick={() => setAnswer(number, value)} className={cn('grid size-7 place-items-center rounded-full border text-xs font-semibold disabled:cursor-default', graded && accepted.includes(String(value)) ? 'border-green-600 bg-green-600 text-white dark:border-green-400 dark:bg-green-400 dark:text-green-950' : graded && answers[number] === value ? 'border-red-500 bg-red-500 text-white dark:border-red-400 dark:bg-red-400 dark:text-red-950' : answers[number] === value ? 'border-ink bg-ink text-white dark:border-white dark:bg-white dark:text-black' : 'border-neutral-300 dark:border-neutral-700')}>{value}</button>)}</div>}
             <span className="grid w-5 shrink-0 place-items-center">{graded && (isCorrect ? <Check size={14} className="text-green-600"/> : <CircleX size={14} className="text-red-500"/>)}</span>
           </div>
         })}
@@ -168,13 +177,17 @@ function AnswerKeyReportDialog({ user, exam, subject, onClose, onSubmitted }: { 
   return <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="answer-report-title"><form onSubmit={submit} className="w-full max-w-md border border-line bg-surface p-6 shadow-xl dark:border-neutral-700 dark:bg-neutral-950"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold text-neutral-500">{subject.name} · {exam.year}년 {exam.month}월</p><h2 id="answer-report-title" className="mt-1 text-xl font-bold">정답·배점 오류 제보</h2></div><button type="button" onClick={onClose} disabled={busy} aria-label="닫기" className="text-neutral-500"><X size={20}/></button></div><div className="mt-5 grid grid-cols-2 gap-3"><label className="text-sm font-semibold">문항<select value={questionNumber} onChange={event => setQuestionNumber(Number(event.target.value))} className="mt-2 h-10 w-full border border-line bg-transparent px-3 font-normal dark:border-neutral-700 dark:bg-neutral-950">{Array.from({ length: subject.question_count }, (_, index) => index + 1).map(number => <option key={number} value={number}>{number}번</option>)}</select></label><label className="text-sm font-semibold">오류 유형<select value={issueType} onChange={event => setIssueType(event.target.value as AnswerKeyIssueType)} className="mt-2 h-10 w-full border border-line bg-transparent px-3 font-normal dark:border-neutral-700 dark:bg-neutral-950"><option value="answer">정답</option><option value="points">배점</option><option value="both">정답·배점</option><option value="other">기타</option></select></label></div><label className="mt-4 block text-sm font-semibold">상세 내용 <span className="font-normal text-neutral-400">(선택)</span><textarea value={details} onChange={event => setDetails(event.target.value)} maxLength={1000} rows={4} className="mt-2 w-full resize-none border border-line bg-transparent p-3 font-normal dark:border-neutral-700" placeholder="확인이 필요한 내용을 알려 주세요."/></label>{error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={onClose} disabled={busy} className="h-10 px-4 text-sm font-semibold">취소</button><button disabled={busy} className="h-10 bg-ink px-4 text-sm font-bold text-white disabled:opacity-40 dark:bg-white dark:text-black">{busy ? '접수 중…' : '제보하기'}</button></div></form></div>
 }
 
-function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: User; exam: ExamListItem; subject: Subject; admin: boolean; openAdmin: () => void; onSaved: (attempt: Awaited<ReturnType<typeof saveAttempt>>) => void }) {
+function LegacyExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: User; exam: ExamListItem; subject: Subject; admin: boolean; openAdmin: () => void; onSaved: (attempt: Awaited<ReturnType<typeof saveAttempt>>) => void }) {
   const [answers, setAnswers] = useState<AnswerMap>(() => parseAnswers(exam.attempt?.answers))
   const [seconds, setSeconds] = useState(exam.attempt?.remaining_seconds ?? subject.duration_seconds)
   const [running, setRunning] = useState(false)
   const [keys, setKeys] = useState<AnswerKey[]>([])
   const [graded, setGraded] = useState(Boolean(exam.attempt?.graded_at))
   const [score, setScore] = useState<number | null>(exam.attempt?.score ?? null)
+  const [roundNumber, setRoundNumber] = useState(exam.attempt?.round_number ?? 1)
+  const [history, setHistory] = useState<Attempt[]>([])
+  const [viewingAttempt, setViewingAttempt] = useState<Attempt | null>(null)
+  const [startingNextRound, setStartingNextRound] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [resetting, setResetting] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
@@ -192,6 +205,10 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
   gradedRef.current = graded
   const count = answeredCount(answers)
   const keyMap = useMemo(() => new Map(keys.map(key => [key.question_number, key.answer])), [keys])
+  const historicalAnswers = viewingAttempt ? parseAnswers(viewingAttempt.answers) : answers
+  const historicalGraded = viewingAttempt ? Boolean(viewingAttempt.graded_at) : graded
+  const historicalScore = viewingAttempt?.score ?? score
+  const isViewingHistory = viewingAttempt !== null
 
   const openPdf = async (path: string) => {
     const pdfWindow = window.open('', '_blank')
@@ -204,6 +221,7 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
   }
 
   useEffect(() => { loadAnswerKeys(exam.examSubjectId).then(setKeys).catch(value => setError(value.message)) }, [exam.examSubjectId])
+  useEffect(() => { loadAttemptHistory(user.id, exam.examSubjectId).then(setHistory).catch(value => setError(value.message)) }, [exam.examSubjectId, user.id])
   const persist = useCallback(async (options?: { graded?: boolean; score?: number | null; timerStarted?: boolean; force?: boolean }) => {
     const currentAnswers = answersRef.current
     const hasTimerStarted = options?.timerStarted ?? timerStartedRef.current
@@ -211,14 +229,14 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
     setSaveState('saving'); setError('')
     try {
       const didGrade = options?.graded ?? gradedRef.current
-      const saved = await saveAttempt(user.id, exam.examSubjectId, { answers: currentAnswers, status: getAttemptStatus(answeredCount(currentAnswers), subject.question_count, didGrade, hasTimerStarted), score: options?.score, remainingSeconds: secondsRef.current, gradedAt: didGrade ? new Date().toISOString() : null })
+      const saved = await saveAttempt(user.id, exam.examSubjectId, roundNumber, { answers: currentAnswers, status: getAttemptStatus(answeredCount(currentAnswers), subject.question_count, didGrade, hasTimerStarted), score: options?.score, remainingSeconds: secondsRef.current, gradedAt: didGrade ? new Date().toISOString() : null })
       setSaveState('saved'); onSaved(saved)
     } catch (value) { setSaveState('error'); setError(value instanceof Error ? value.message : '저장하지 못했습니다.') }
-  }, [exam.examSubjectId, onSaved, subject.duration_seconds, subject.question_count, user.id])
+  }, [exam.examSubjectId, onSaved, roundNumber, subject.duration_seconds, subject.question_count, user.id])
 
-  useEffect(() => { if (!mounted.current) { mounted.current = true; return } setGraded(false); const id = window.setTimeout(() => void persist({ graded: false, score: null }), 700); return () => window.clearTimeout(id) }, [answers, persist])
-  useEffect(() => { const id = window.setInterval(() => { if (secondsRef.current !== subject.duration_seconds) void persist() }, 15000); return () => window.clearInterval(id) }, [persist, subject.duration_seconds])
-  useEffect(() => { const saveOnLeave = () => { void persist() }; window.addEventListener('pagehide', saveOnLeave); return () => { window.removeEventListener('pagehide', saveOnLeave); void persist() } }, [persist])
+  useEffect(() => { if (!mounted.current) { mounted.current = true; return } if (isViewingHistory) return; setGraded(false); const id = window.setTimeout(() => void persist({ graded: false, score: null }), 700); return () => window.clearTimeout(id) }, [answers, isViewingHistory, persist])
+  useEffect(() => { const id = window.setInterval(() => { if (!isViewingHistory && secondsRef.current !== subject.duration_seconds) void persist() }, 15000); return () => window.clearInterval(id) }, [isViewingHistory, persist, subject.duration_seconds])
+  useEffect(() => { const saveOnLeave = () => { if (!isViewingHistory) void persist() }; window.addEventListener('pagehide', saveOnLeave); return () => { window.removeEventListener('pagehide', saveOnLeave); if (!isViewingHistory) void persist() } }, [isViewingHistory, persist])
 
   const grade = async () => {
     if (!keys.length) { setError('정답표를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.'); return }
@@ -234,7 +252,143 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
     await persist({ graded: false, score: null, timerStarted: false, force: true })
     setResetting(false)
   }
+  const beginNextRound = async () => {
+    if (!window.confirm(`${roundNumber}회독 기록을 보관하고 ${roundNumber + 1}회독을 시작할까요?`)) return
+    setStartingNextRound(true); setError('')
+    try {
+      const next = await startNextAttemptRound(exam.examSubjectId)
+      setHistory(await loadAttemptHistory(user.id, exam.examSubjectId))
+      const emptyAnswers: AnswerMap = {}
+      setRoundNumber(next.round_number); setAnswers(emptyAnswers); setSeconds(subject.duration_seconds); setGraded(false); setScore(null); setRunning(false); setViewingAttempt(null)
+      answersRef.current = emptyAnswers; secondsRef.current = subject.duration_seconds; gradedRef.current = false; timerStartedRef.current = false
+      onSaved(next)
+    } catch (value) { setError(value instanceof Error ? value.message : '다음 회독을 시작하지 못했습니다.') }
+    finally { setStartingNextRound(false) }
+  }
   return <main className="mx-auto max-w-7xl px-4 pb-24 pt-6 sm:px-6 sm:pt-10"><div className="mb-7 flex flex-col justify-between gap-5 border-b border-line pb-6 dark:border-neutral-800 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-neutral-500">{subject.name}</p><h1 className="mt-1 text-2xl font-bold sm:text-3xl">{exam.year}년 {exam.month}월 {exam.title}</h1></div><Timer seconds={seconds} running={running} initialSeconds={subject.duration_seconds} onSeconds={setSeconds} onRunning={value => { setRunning(value); if (value) { timerStartedRef.current = true; void persist({ timerStarted: true, force: true }) } else void persist() }} onReset={() => { setRunning(false); secondsRef.current = subject.duration_seconds; setSeconds(subject.duration_seconds); if (!gradedRef.current && !answeredCount(answersRef.current)) { timerStartedRef.current = false; void persist({ graded: false, score: null, timerStarted: false, force: true }) } else void persist() }}/></div>{exam.is_development_data && <div className="mb-6 border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">개발용 샘플 시험·정답입니다. 공식 기출 정답으로 사용하지 마세요.</div>}<div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]"><section className="min-w-0"><div className="mb-5 flex items-end justify-between"><div><h2 className="text-xl font-bold">OMR 답안</h2><p className="mt-1 text-sm text-neutral-500">문항별 답을 선택하면 자동 저장됩니다.</p></div><div className="text-right"><span className="text-sm font-semibold">{count}/{subject.question_count}</span><p className={cn('mt-1 text-xs', saveState === 'error' ? 'text-red-600' : 'text-neutral-400')}>{saveState === 'saving' ? '저장 중…' : saveState === 'saved' ? '저장됨' : saveState === 'error' ? '저장 실패' : ''}</p></div></div><OmrGrid subject={subject} answers={answers} setAnswers={setAnswers} graded={graded} answerKeys={keyMap}/></section><aside className="lg:sticky lg:top-24 lg:self-start"><div className="border-y border-line py-5 dark:border-neutral-800"><h3 className="font-bold">시험 자료</h3>{exam.question_pdf_path && <button onClick={() => void openPdf(exam.question_pdf_path!)} className="mt-4 flex w-full items-center justify-between py-2 text-left text-sm font-semibold">기출문제 PDF <Download size={16}/></button>}{exam.explanation_pdf_path && <button onClick={() => void openPdf(exam.explanation_pdf_path!)} className="flex w-full items-center justify-between py-2 text-left text-sm font-semibold">정답 및 해설 <Download size={16}/></button>}</div>{graded && score !== null && <div className="mt-5 bg-green-50 p-5 text-green-950 dark:bg-green-950 dark:text-green-100"><p className="text-sm font-bold">채점 완료</p><p className="mt-2 text-3xl font-bold">{score}점</p><p className="mt-1 text-xs opacity-70">미응답 문항은 오답으로 처리했어요.</p></div>}{error && <div className="mt-4 bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-100"><p>{error}</p>{saveState === 'error' && <button onClick={() => void persist()} className="mt-2 font-bold underline">다시 저장</button>}</div>}<button onClick={grade} disabled={!keys.length || resetting} className="mt-5 h-12 w-full bg-ink font-bold text-white disabled:opacity-30 dark:bg-white dark:text-black">채점하기</button><button onClick={() => void resetExam()} disabled={resetting} className="mt-2 flex h-11 w-full items-center justify-center gap-2 border border-line text-sm font-semibold text-neutral-600 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300"><RotateCcw size={15}/>{resetting ? '초기화 중…' : '초기화'}</button>{admin ? <button onClick={openAdmin} className="mt-2 flex h-10 w-full items-center justify-center gap-2 border border-line text-xs font-semibold dark:border-neutral-700"><Settings size={14}/>관리자에서 수정</button> : null}<button onClick={() => { setReportSubmitted(false); setReportOpen(true) }} className="mt-4 w-full text-center text-xs text-neutral-400 underline underline-offset-4 hover:text-neutral-600">정답·배점 오류 제보</button>{reportSubmitted ? <p role="status" className="mt-2 text-center text-xs text-green-600">제보가 접수되었습니다.</p> : null}</aside></div>{reportOpen ? <AnswerKeyReportDialog user={user} exam={exam} subject={subject} onClose={() => setReportOpen(false)} onSubmitted={() => { setReportOpen(false); setReportSubmitted(true) }}/> : null}</main>
+}
+
+function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: User; exam: ExamListItem; subject: Subject; admin: boolean; openAdmin: () => void; onSaved: (attempt: Awaited<ReturnType<typeof saveAttempt>>) => void }) {
+  const [answers, setAnswers] = useState<AnswerMap>(() => parseAnswers(exam.attempt?.answers))
+  const [seconds, setSeconds] = useState(exam.attempt?.remaining_seconds ?? subject.duration_seconds)
+  const [running, setRunning] = useState(false)
+  const [keys, setKeys] = useState<AnswerKey[]>([])
+  const [graded, setGraded] = useState(Boolean(exam.attempt?.graded_at))
+  const [score, setScore] = useState<number | null>(exam.attempt?.score ?? null)
+  const [roundNumber, setRoundNumber] = useState(exam.attempt?.round_number ?? 1)
+  const [history, setHistory] = useState<Attempt[]>([])
+  const [viewingAttempt, setViewingAttempt] = useState<Attempt | null>(null)
+  const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportSubmitted, setReportSubmitted] = useState(false)
+  const mounted = useRef(false)
+  const answersRef = useRef(answers)
+  const secondsRef = useRef(seconds)
+  const gradedRef = useRef(graded)
+  const timerStartedRef = useRef((exam.attempt?.status === 'doing' && !answeredCount(parseAnswers(exam.attempt?.answers))) || seconds < subject.duration_seconds)
+  answersRef.current = answers
+  secondsRef.current = seconds
+  gradedRef.current = graded
+
+  const isViewingHistory = viewingAttempt !== null
+  const displayedAnswers = viewingAttempt ? parseAnswers(viewingAttempt.answers) : answers
+  const displayedGraded = viewingAttempt ? Boolean(viewingAttempt.graded_at) : graded
+  const displayedScore = viewingAttempt?.score ?? score
+  const displayedSeconds = viewingAttempt?.remaining_seconds ?? seconds
+  const count = answeredCount(displayedAnswers)
+  const keyMap = useMemo(() => new Map(keys.map(key => [key.question_number, key.answer])), [keys])
+
+  const reloadHistory = useCallback(async () => {
+    try { setHistory(await loadAttemptHistory(user.id, exam.examSubjectId)) }
+    catch (value) { setError(value instanceof Error ? value.message : '회독 기록을 불러오지 못했습니다.') }
+  }, [exam.examSubjectId, user.id])
+
+  useEffect(() => { loadAnswerKeys(exam.examSubjectId).then(setKeys).catch(value => setError(value.message)) }, [exam.examSubjectId])
+  useEffect(() => { void reloadHistory() }, [reloadHistory])
+
+  const persist = useCallback(async (options?: { graded?: boolean; score?: number | null; timerStarted?: boolean; force?: boolean }) => {
+    const currentAnswers = answersRef.current
+    const hasTimerStarted = options?.timerStarted ?? timerStartedRef.current
+    if (!answeredCount(currentAnswers) && secondsRef.current === subject.duration_seconds && !options?.graded && !hasTimerStarted && !options?.force) return
+    setSaveState('saving'); setError('')
+    try {
+      const didGrade = options?.graded ?? gradedRef.current
+      const saved = await saveAttempt(user.id, exam.examSubjectId, roundNumber, {
+        answers: currentAnswers,
+        status: getAttemptStatus(answeredCount(currentAnswers), subject.question_count, didGrade, hasTimerStarted),
+        score: options?.score,
+        remainingSeconds: secondsRef.current,
+        gradedAt: didGrade ? new Date().toISOString() : null,
+      })
+      setSaveState('saved'); onSaved(saved)
+    } catch (value) { setSaveState('error'); setError(value instanceof Error ? value.message : '저장하지 못했습니다.') }
+  }, [exam.examSubjectId, onSaved, roundNumber, subject.duration_seconds, subject.question_count, user.id])
+
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    if (isViewingHistory) return
+    setGraded(false)
+    const id = window.setTimeout(() => void persist({ graded: false, score: null }), 700)
+    return () => window.clearTimeout(id)
+  }, [answers, isViewingHistory, persist])
+  useEffect(() => {
+    const id = window.setInterval(() => { if (!isViewingHistory && secondsRef.current !== subject.duration_seconds) void persist() }, 15000)
+    return () => window.clearInterval(id)
+  }, [isViewingHistory, persist, subject.duration_seconds])
+  useEffect(() => {
+    const saveOnLeave = () => { if (!isViewingHistory) void persist() }
+    window.addEventListener('pagehide', saveOnLeave)
+    return () => { window.removeEventListener('pagehide', saveOnLeave); if (!isViewingHistory) void persist() }
+  }, [isViewingHistory, persist])
+
+  const grade = async () => {
+    if (!keys.length) { setError('정답표를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.'); return }
+    const nextScore = scoreAnswers(answers, keys)
+    setScore(nextScore); setGraded(true); gradedRef.current = true
+    await persist({ graded: true, score: nextScore })
+  }
+  const resetExam = async () => {
+    if (!window.confirm('현재 회독의 OMR 답안, 채점 결과와 타이머를 초기화할까요?')) return
+    setBusy(true)
+    const emptyAnswers: AnswerMap = {}
+    setRunning(false); setAnswers(emptyAnswers); setSeconds(subject.duration_seconds); setGraded(false); setScore(null)
+    answersRef.current = emptyAnswers; secondsRef.current = subject.duration_seconds; gradedRef.current = false; timerStartedRef.current = false
+    await persist({ graded: false, score: null, timerStarted: false, force: true })
+    setBusy(false)
+  }
+  const beginNextRound = async () => {
+    if (!window.confirm(`${roundNumber}회독 기록을 보관하고 ${roundNumber + 1}회독을 시작할까요?`)) return
+    setBusy(true); setError('')
+    try {
+      const next = await startNextAttemptRound(exam.examSubjectId)
+      const emptyAnswers: AnswerMap = {}
+      setRoundNumber(next.round_number); setAnswers(emptyAnswers); setSeconds(subject.duration_seconds); setGraded(false); setScore(null); setRunning(false); setViewingAttempt(null)
+      answersRef.current = emptyAnswers; secondsRef.current = subject.duration_seconds; gradedRef.current = false; timerStartedRef.current = false
+      onSaved(next)
+      await reloadHistory()
+    } catch (value) { setError(value instanceof Error ? value.message : '다음 회독을 시작하지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  const openPdf = async (path: string) => {
+    const pdfWindow = window.open('', '_blank')
+    if (!pdfWindow) { setError('새 창을 열지 못했습니다. 브라우저의 팝업 차단을 해제한 뒤 다시 시도해 주세요.'); return }
+    pdfWindow.opener = null
+    try { pdfWindow.location.href = await createExamPdfUrl(path) }
+    catch (value) { pdfWindow.close(); setError(value instanceof Error ? value.message : 'PDF를 열지 못했습니다.') }
+  }
+  const formattedTime = `${String(Math.floor(displayedSeconds / 60)).padStart(2, '0')}:${String(displayedSeconds % 60).padStart(2, '0')}`
+
+  return <main className="mx-auto max-w-7xl px-4 pb-24 pt-6 sm:px-6 sm:pt-10">
+    <div className="mb-7 flex flex-col justify-between gap-5 border-b border-line pb-6 dark:border-neutral-800 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-neutral-500">{subject.name} · <span className="text-ink dark:text-white">{isViewingHistory ? `${viewingAttempt.round_number}회독 기록` : `${roundNumber}회독`}</span></p><h1 className="mt-1 text-2xl font-bold sm:text-3xl">{exam.year}년 {exam.month}월 {exam.title}</h1></div>{isViewingHistory ? <div className="text-sm font-semibold text-neutral-500">남은 시간 {formattedTime}</div> : <Timer seconds={seconds} running={running} initialSeconds={subject.duration_seconds} onSeconds={setSeconds} onRunning={value => { setRunning(value); if (value) { timerStartedRef.current = true; void persist({ timerStarted: true, force: true }) } else void persist() }} onReset={() => { setRunning(false); secondsRef.current = subject.duration_seconds; setSeconds(subject.duration_seconds); if (!gradedRef.current && !answeredCount(answersRef.current)) { timerStartedRef.current = false; void persist({ graded: false, score: null, timerStarted: false, force: true }) } else void persist() }}/>}</div>
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]"><section className="min-w-0"><div className="mb-5 flex items-end justify-between"><div><h2 className="text-xl font-bold">OMR 답안</h2><p className="mt-1 text-sm text-neutral-500">{isViewingHistory ? '이전 회독의 읽기 전용 기록입니다.' : '문항별 답을 선택하면 자동 저장됩니다.'}</p></div><div className="text-right"><span className="text-sm font-semibold">{count}/{subject.question_count}</span>{!isViewingHistory && <p className={cn('mt-1 text-xs', saveState === 'error' ? 'text-red-600' : 'text-neutral-400')}>{saveState === 'saving' ? '저장 중…' : saveState === 'saved' ? '저장됨' : saveState === 'error' ? '저장 실패' : ''}</p>}</div></div><OmrGrid subject={subject} answers={displayedAnswers} setAnswers={setAnswers} graded={displayedGraded} answerKeys={keyMap} readOnly={isViewingHistory}/></section>
+      <aside className="lg:sticky lg:top-24 lg:self-start"><div className="border-y border-line py-5 dark:border-neutral-800"><h3 className="font-bold">시험 자료</h3>{exam.question_pdf_path && <button onClick={() => void openPdf(exam.question_pdf_path!)} className="mt-4 flex w-full items-center justify-between py-2 text-left text-sm font-semibold">기출문제 PDF <Download size={16}/></button>}{exam.explanation_pdf_path && <button onClick={() => void openPdf(exam.explanation_pdf_path!)} className="flex w-full items-center justify-between py-2 text-left text-sm font-semibold">정답 및 해설 <Download size={16}/></button>}</div>
+      {displayedGraded && displayedScore !== null && <div className="mt-5 bg-green-50 p-5 text-green-950 dark:bg-green-950 dark:text-green-100"><p className="text-sm font-bold">{isViewingHistory ? `${viewingAttempt.round_number}회독 채점 결과` : '채점 완료'}</p><p className="mt-2 text-3xl font-bold">{displayedScore}점</p></div>}
+      <div className="mt-5 border-y border-line py-4 dark:border-neutral-800"><div className="flex items-center justify-between"><h3 className="font-bold">회독 기록</h3><span className="text-xs text-neutral-500">완료 {history.length}회</span></div>{history.length ? <div className="mt-3 space-y-1">{history.map(attempt => <button key={attempt.id} onClick={() => { setRunning(false); setViewingAttempt(attempt) }} className={cn('flex w-full items-center justify-between px-2 py-2 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900', viewingAttempt?.id === attempt.id && 'bg-neutral-100 dark:bg-neutral-900')}><span className="font-semibold">{attempt.round_number}회독</span><span className="text-right"><b>{attempt.score ?? '-'}점</b><small className="mt-0.5 block text-xs text-neutral-500">{attempt.graded_at ? new Date(attempt.graded_at).toLocaleDateString('ko-KR') : ''}</small></span></button>)}</div> : <p className="mt-3 text-sm text-neutral-500">완료된 회독이 아직 없습니다.</p>}</div>
+      {isViewingHistory ? <button onClick={() => setViewingAttempt(null)} className="mt-5 h-11 w-full border border-line text-sm font-bold dark:border-neutral-700">현재 {roundNumber}회독으로 돌아가기</button> : <><button onClick={grade} disabled={!keys.length || busy} className="mt-5 h-12 w-full bg-ink font-bold text-white disabled:opacity-30 dark:bg-white dark:text-black">채점하기</button>{graded && <button onClick={() => void beginNextRound()} disabled={busy} className="mt-2 h-11 w-full border border-green-600 text-sm font-bold text-green-700 disabled:opacity-40 dark:border-green-400 dark:text-green-300">{busy ? '다음 회독 준비 중…' : `${roundNumber + 1}회독 시작`}</button>}<button onClick={() => void resetExam()} disabled={busy} className="mt-2 flex h-11 w-full items-center justify-center gap-2 border border-line text-sm font-semibold text-neutral-600 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300"><RotateCcw size={15}/>{busy ? '처리 중…' : '현재 회독 초기화'}</button></>}
+      {error && <div className="mt-4 bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-100">{error}</div>}{admin && <button onClick={openAdmin} className="mt-2 flex h-10 w-full items-center justify-center gap-2 border border-line text-xs font-semibold dark:border-neutral-700"><Settings size={14}/>관리자에서 수정</button>}<button onClick={() => { setReportSubmitted(false); setReportOpen(true) }} className="mt-4 w-full text-center text-xs text-neutral-400 underline underline-offset-4 hover:text-neutral-600">정답·배점 오류 제보</button>{reportSubmitted && <p role="status" className="mt-2 text-center text-xs text-green-600">제보가 접수되었습니다.</p>}</aside></div>
+    {reportOpen && <AnswerKeyReportDialog user={user} exam={exam} subject={subject} onClose={() => setReportOpen(false)} onSubmitted={() => { setReportOpen(false); setReportSubmitted(true) }}/>}</main>
 }
 
 function AccountDeletionDialog({ user, googleReauthenticated, onClose }: { user: User; googleReauthenticated: boolean; onClose: () => void }) {
