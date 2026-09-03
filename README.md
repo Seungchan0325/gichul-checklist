@@ -59,7 +59,7 @@ where user_id = '관리자 권한을 제거할 사용자 UUID';
 관리자 계정으로 로그인한 뒤 헤더의 `관리`를 엽니다.
 
 1. `새 기출 과목 추가`에서 연도, 시행 월, 시험명과 과목 하나를 선택해 초안을 생성합니다. 같은 시행에 다른 과목을 추가할 때도 이 과정을 반복합니다.
-2. 선택한 과목에 문제·해설 PDF를 업로드합니다.
+2. 로컬 원본을 PDF 서버 동기화 스크립트로 반영합니다.
 3. 정답과 배점을 직접 입력하거나 CSV로 가져옵니다.
 4. 해당 과목의 자료가 준비되면 `검증 후 게시`를 실행합니다. 다른 과목의 초안·게시 상태에는 영향을 주지 않습니다.
 
@@ -79,22 +79,33 @@ question_number,answer,points
 - 국어·수학·영어는 100점, 한국사·탐구·제2외국어/한문은 50점이어야 합니다.
 - 국어·영어·한국사·탐구는 2·3점, 수학은 2·3·4점, 제2외국어/한문은 1·2점 배점만 사용할 수 있습니다.
 
-PDF를 제거하면 해당 과목만 초안으로 전환됩니다. 과목을 제거하면 해당 과목에 연결된 사용자 답안·점수·타이머가 함께 삭제됩니다. 같은 시행의 다른 과목이 없을 때만 시행 정보도 함께 제거됩니다.
+과목을 제거하면 해당 과목에 연결된 사용자 답안·점수·타이머가 함께 삭제됩니다. 같은 시행의 다른 과목이 없을 때만 시행 정보도 함께 제거됩니다. 제거된 과목의 서버 PDF는 다음 전체 동기화에서 정리됩니다.
 
-기출 삭제는 시험명을 다시 입력해야 합니다. 삭제하면 선택한 기출 과목의 정답표, PDF와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
+기출 삭제는 시험명을 다시 입력해야 합니다. 삭제하면 선택한 기출 과목의 정답표와 모든 사용자의 관련 풀이 기록이 복구 불가능하게 제거됩니다. 관리자 작업은 `admin_audit_logs`에 기록됩니다.
 
 ## PDF 저장소 관리
 
-PDF는 비공개 Supabase Storage 버킷 `exam-pdfs`에 저장됩니다. 버킷을 공개로 변경하지 않습니다.
+PDF는 개인 서버의 공개 정적 디렉터리 `/var/www/gichul-checklist/pdfs`에 저장됩니다. DB에는 아래 상대 경로만 저장하고 앱은 같은 도메인의 `/pdfs/`에서 파일을 다운로드합니다.
 
 ```text
 exams/{시험 ID}/subjects/{과목 ID}/question.pdf
 exams/{시험 ID}/subjects/{과목 ID}/explanation.pdf
 ```
 
-PDF만 업로드할 수 있으며 파일당 최대 크기는 50MB입니다. 일반 사용자는 게시된 시험 자료에 대해서만 10분 만료 서명 URL을 발급받습니다.
+로컬 원본 전체를 검증하고 서버에 동기화하려면 서비스 역할 키를 현재 셸에만 설정한 뒤 실행합니다. 키를 `.env.local`이나 저장소에 기록하지 않습니다.
 
-Storage 정리에 실패한 영구 삭제 작업은 `admin_audit_logs`의 `pdf_cleanup_failed` 기록을 확인하고 해당 경로의 파일을 Dashboard에서 제거합니다.
+```bash
+export SUPABASE_SERVICE_ROLE_KEY='로컬 셸에만 설정'
+node scripts/import-ebsi-exam.mjs --apply --sync-exam-data --sync-pdf-server --publish
+```
+
+기본 SSH 대상은 `lsc-server-deploy`, 서버 경로는 `/var/www/gichul-checklist/pdfs`입니다. 다른 환경에서는 `EXAM_PDF_SSH_TARGET`과 `EXAM_PDF_REMOTE_ROOT`로 덮어쓸 수 있습니다. 동기화는 서버 PDF 디렉터리에 한해서만 오래된 파일을 삭제하며, 전송 후 모든 파일의 SHA-256을 검증합니다.
+
+Supabase Storage에서 최초 이전본을 정리할 때만 다음 옵션을 추가합니다. 서버 동기화와 전수 검증이 실패하면 Storage 삭제는 실행되지 않습니다.
+
+```bash
+node scripts/import-ebsi-exam.mjs --apply --sync-exam-data --sync-pdf-server --publish --purge-supabase-pdfs
+```
 
 ## 데이터베이스 유지보수
 
@@ -149,7 +160,7 @@ npm ci
 set -a; source ./production.env; set +a
 npm run build
 sudo install -d -m 755 /var/www/gichul-checklist
-sudo rsync -a --delete dist/ /var/www/gichul-checklist/
+sudo rsync -a --delete --exclude '/pdfs/' dist/ /var/www/gichul-checklist/
 ```
 
 서버에서는 `deploy/Caddyfile`을 `/etc/caddy/Caddyfile`로 복사하고, `deploy/caddy.env.example`을 `/etc/gichul-checklist/caddy.env`로 복사해 실제 도메인과 ACME 이메일을 입력합니다. 이어서 systemd override에 `EnvironmentFile=/etc/gichul-checklist/caddy.env`를 설정합니다. Caddy 서버가 80·443 포트를 외부에 제공해야 인증서가 자동 발급됩니다. 배포 전 `sudo caddy validate --config /etc/caddy/Caddyfile`로 설정을 검사합니다.
@@ -181,7 +192,7 @@ sudo chown -R deploy:deploy /var/www/gichul-checklist
 - 이메일 가입·확인·로그인과 Google 로그인이 동작하는지 확인합니다.
 - 관리자 계정에만 `관리` 메뉴가 보이는지 확인합니다.
 - 초안 시험이 일반 사용자에게 보이지 않는지 확인합니다.
-- 게시된 시험의 PDF 열기, OMR 저장, 타이머 복원과 채점이 동작하는지 확인합니다.
+- 게시된 시험의 `/pdfs/` PDF 다운로드, OMR 저장, 타이머 복원과 채점이 동작하는지 확인합니다.
 - 계정 삭제 Edge Function이 배포되어 있는지 확인합니다.
 
 ## 문제 해결
@@ -190,4 +201,4 @@ sudo chown -R deploy:deploy /var/www/gichul-checklist
 - `docker could not be found`: Docker Desktop의 WSL Integration을 활성화하고 새 WSL 터미널을 엽니다.
 - 함수가 401을 반환: 로그아웃 후 다시 로그인해 세션을 갱신합니다.
 - 관리자 메뉴가 보이지 않음: 현재 사용자의 UUID가 `admin_users`에 있는지 확인하고 앱을 새로고침합니다.
-- PDF 업로드가 거부됨: 관리자 권한, 파일 MIME 타입, 50MB 제한과 `exam-pdfs` 버킷 정책을 확인합니다.
+- PDF 동기화 실패: `ssh lsc-server-deploy`, 서버 디스크 여유, 로컬 원본의 `manifest.csv`와 PDF 헤더를 확인합니다.

@@ -154,31 +154,6 @@ export async function saveManagedAnswerKeys(user: User, item: ManagedExamSubject
   await audit(user.id, 'update_answer_keys', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, question_count: rows.length })
 }
 
-export async function uploadManagedPdf(user: User, item: ManagedExamSubject, kind: 'question' | 'explanation', file: File) {
-  if (file.type !== 'application/pdf') throw new Error('PDF 파일만 업로드할 수 있습니다.')
-  if (file.size > 50 * 1024 * 1024) throw new Error('PDF 파일은 50MB 이하여야 합니다.')
-  const db = client()
-  const path = `exams/${item.exam_id}/subjects/${item.subject_id}/${kind}.pdf`
-  const uploadResult = await db.storage.from('exam-pdfs').upload(path, file, { contentType: 'application/pdf', upsert: true })
-  if (uploadResult.error) throw uploadResult.error
-  const update = kind === 'question' ? { question_pdf_path: path } : { explanation_pdf_path: path }
-  const updateResult = await db.from('exam_subjects').update(update).eq('id', item.id)
-  if (updateResult.error) throw updateResult.error
-  await audit(user.id, `upload_${kind}_pdf`, item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, path, size: file.size })
-}
-
-export async function removeManagedPdf(user: User, item: ManagedExamSubject, kind: 'question' | 'explanation') {
-  const db = client()
-  const path = kind === 'question' ? item.question_pdf_path : item.explanation_pdf_path
-  if (!path) return
-  const storageResult = await db.storage.from('exam-pdfs').remove([path])
-  if (storageResult.error) throw storageResult.error
-  const update = kind === 'question' ? { question_pdf_path: null, status: 'draft' as const, published_at: null } : { explanation_pdf_path: null, status: 'draft' as const, published_at: null }
-  const linkResult = await db.from('exam_subjects').update(update).eq('id', item.id)
-  if (linkResult.error) throw linkResult.error
-  await audit(user.id, `remove_${kind}_pdf`, item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, path })
-}
-
 export async function publishManagedExamSubject(user: User, item: ManagedExamSubject) {
   if (!item.question_pdf_path || !item.explanation_pdf_path) throw new Error('문제·해설 PDF가 모두 필요합니다.')
   const validationError = validateAnswerKeys(item.subject, item.answerKeys)
@@ -206,8 +181,4 @@ export async function deleteManagedExamSubject(user: User, item: ManagedExamSubj
     if (parentResult.error) throw parentResult.error
   }
   await audit(user.id, 'delete_exam_subject', item.exam_id, { exam_subject_id: item.id, subject_id: item.subject_id, year: item.exam.year, month: item.exam.month, title: item.exam.title, attempt_count: item.attemptCount, pdf_paths: paths })
-  if (paths.length) {
-    const storageResult = await db.storage.from('exam-pdfs').remove(paths)
-    if (storageResult.error) await audit(user.id, 'pdf_cleanup_failed', item.exam_id, { exam_subject_id: item.id, paths, message: storageResult.error.message })
-  }
 }

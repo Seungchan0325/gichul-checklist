@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { createClient } from '@supabase/supabase-js'
+import { purgeMigratedSupabasePdfs, syncPdfFiles } from './lib/pdf-server.mjs'
 
 const DEFAULT_ROOT = '/mnt/c/Users/imcha/Documents/Codex/2026-08-28/plugin-browser-openai-bundled-ebsi-3/outputs'
 const FIRST_YEAR = 2021
@@ -18,6 +19,8 @@ const check = args.has('--check')
 const regradeAttempts = args.has('--regrade-attempts')
 const syncSubjectCatalog = args.has('--sync-subject-catalog')
 const syncExamData = args.has('--sync-exam-data')
+const syncPdfServer = args.has('--sync-pdf-server')
+const purgeSupabasePdfs = args.has('--purge-supabase-pdfs')
 
 const standardSubjects = [
   ['국어', ['화법과 작문', '언어와 매체'], 45, 4800], ['수학', ['확률과 통계', '미적분', '기하'], 30, 6000], ['영어', ['영어'], 45, 4200], ['한국사', ['한국사'], 20, 1800],
@@ -265,7 +268,7 @@ async function syncMissingSubjects(db) {
   console.log(`과목 카탈로그 동기화 완료: ${missing.length}개 추가`)
 }
 
-async function uploadBundle(db, exam, bundle) {
+async function uploadBundle(db, exam, bundle, pdfFiles, pendingPdfUpdates) {
   const existing = ensure(await db.from('exam_subjects')
     .select('id, status, question_pdf_path, explanation_pdf_path, answer_keys(question_number, answer, points)')
     .eq('exam_id', exam.id)
@@ -286,19 +289,8 @@ async function uploadBundle(db, exam, bundle) {
     if (changed) ensure(await db.from('answer_keys').upsert(bundle.rows.map(row => ({ ...row, exam_subject_id: link.id })), { onConflict: 'exam_subject_id,question_number' }))
     const missingPdf = !existing || !existing.question_pdf_path || !existing.explanation_pdf_path
     const needsPublication = publish && link.status !== 'published'
-    if (missingPdf) {
-      const uploads = [
-        [bundle.problemFile, `exams/${exam.id}/subjects/${bundle.subject.id}/question.pdf`],
-        [bundle.explanationFile, `exams/${exam.id}/subjects/${bundle.subject.id}/explanation.pdf`],
-      ]
-      await Promise.all(uploads.map(async ([filename, storagePath]) => {
-        const body = new Blob([await fs.readFile(path.join(bundle.monthRoot, filename))], { type: 'application/pdf' })
-        ensure(await db.storage.from('exam-pdfs').upload(storagePath, body, { contentType: 'application/pdf', upsert: true }))
-      }))
-      const publication = publish ? { status: 'published', published_at: new Date().toISOString() } : {}
-      ensure(await db.from('exam_subjects').update({ question_pdf_path: uploads[0][1], explanation_pdf_path: uploads[1][1], ...publication }).eq('id', link.id))
-    }
-    if (!missingPdf && needsPublication) ensure(await db.from('exam_subjects').update({ status: 'published', published_at: new Date().toISOString() }).eq('id', link.id))
+    const uploads = planPdfFiles(exam, bundle, pdfFiles)
+    if (missingPdf || needsPublication) pendingPdfUpdates.push({ id: link.id, questionPath: uploads[0].destination, explanationPath: uploads[1].destination, publish })
     return changed || missingPdf || needsPublication
   }
   const isComplete = existing
@@ -306,21 +298,25 @@ async function uploadBundle(db, exam, bundle) {
     && existing.explanation_pdf_path
     && existing.answer_keys.length === bundle.rows.length
     && (!publish || existing.status === 'published')
-  if (isComplete) return false
+  if (isComplete) {
+    planPdfFiles(exam, bundle, pdfFiles)
+    return false
+  }
 
   const link = ensure(await db.from('exam_subjects').upsert({ exam_id: exam.id, subject_id: bundle.subject.id }, { onConflict: 'exam_id,subject_id' }).select().single())
-  const uploads = [
-    [bundle.problemFile, `exams/${exam.id}/subjects/${bundle.subject.id}/question.pdf`],
-    [bundle.explanationFile, `exams/${exam.id}/subjects/${bundle.subject.id}/explanation.pdf`],
-  ]
-  await Promise.all(uploads.map(async ([filename, storagePath]) => {
-    const body = new Blob([await fs.readFile(path.join(bundle.monthRoot, filename))], { type: 'application/pdf' })
-    ensure(await db.storage.from('exam-pdfs').upload(storagePath, body, { contentType: 'application/pdf', upsert: true }))
-  }))
-  const publication = publish ? { status: 'published', published_at: new Date().toISOString() } : {}
-  ensure(await db.from('exam_subjects').update({ question_pdf_path: uploads[0][1], explanation_pdf_path: uploads[1][1], ...publication }).eq('id', link.id))
+  const uploads = planPdfFiles(exam, bundle, pdfFiles)
+  pendingPdfUpdates.push({ id: link.id, questionPath: uploads[0].destination, explanationPath: uploads[1].destination, publish })
   ensure(await db.from('answer_keys').upsert(bundle.rows.map(row => ({ ...row, exam_subject_id: link.id })), { onConflict: 'exam_subject_id,question_number' }))
   return true
+}
+
+function planPdfFiles(exam, bundle, pdfFiles) {
+  const files = [
+    { source: path.join(bundle.monthRoot, bundle.problemFile), destination: `exams/${exam.id}/subjects/${bundle.subject.id}/question.pdf` },
+    { source: path.join(bundle.monthRoot, bundle.explanationFile), destination: `exams/${exam.id}/subjects/${bundle.subject.id}/explanation.pdf` },
+  ]
+  pdfFiles.push(...files)
+  return files
 }
 
 function answerRowsChanged(current, next) {
@@ -334,6 +330,10 @@ async function main() {
   if (regradeAttempts && (!(replaceAnswerKeys || syncExamData) || !apply || check)) throw new Error('--regrade-attempts는 --apply와 정답 동기화 옵션을 함께 사용해야 합니다.')
   if (syncSubjectCatalog && !apply) throw new Error('--sync-subject-catalog은 --apply와 함께 사용해야 합니다.')
   if (syncExamData && !apply) throw new Error('--sync-exam-data는 --apply와 함께 사용해야 합니다.')
+  if (syncPdfServer && !apply) throw new Error('--sync-pdf-server는 --apply와 함께 사용해야 합니다.')
+  if (purgeSupabasePdfs && !syncPdfServer) throw new Error('--purge-supabase-pdfs는 --sync-pdf-server와 함께 사용해야 합니다.')
+  if (syncPdfServer && replaceAnswerKeys) throw new Error('--sync-pdf-server와 --replace-answer-keys는 함께 사용할 수 없습니다.')
+  if (apply && (syncExamData || (!replaceAnswerKeys && !syncSubjectCatalog)) && !syncPdfServer) throw new Error('PDF를 Supabase Storage에 올리지 않습니다. --sync-pdf-server를 함께 사용해 주세요.')
   const url = process.env.VITE_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !serviceKey) throw new Error('VITE_SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY를 환경변수로 설정해 주세요.')
@@ -355,6 +355,8 @@ async function main() {
 
   let completed = 0
   let skipped = 0
+  const pdfFiles = []
+  const pendingPdfUpdates = []
   for (const examData of exams) {
     const examResult = replaceAnswerKeys
       ? await db.from('exams').select().eq('year', examData.year).eq('month', examData.month).eq('title', examData.title).maybeSingle()
@@ -362,11 +364,21 @@ async function main() {
     const exam = ensure(examResult)
     if (!exam) throw new Error(`${examData.year}.${examData.month} ${examData.title}: 운영 시험을 찾지 못했습니다.`)
     await mapConcurrent(examData.bundles, CONCURRENCY, async bundle => {
-      const uploaded = await retry(() => uploadBundle(db, exam, bundle), `${examData.year}.${examData.month} ${bundle.subject.name}`)
+      const uploaded = await retry(() => uploadBundle(db, exam, bundle, pdfFiles, pendingPdfUpdates), `${examData.year}.${examData.month} ${bundle.subject.name}`)
       completed += 1
       if (!uploaded) skipped += 1
       console.log(`[${completed}/${bundleCount}] ${uploaded ? '업로드' : '기존'} · ${examData.year}.${String(examData.month).padStart(2, '0')} ${examData.title} · ${bundle.subject.name}`)
     })
+  }
+  if (syncPdfServer) {
+    await syncPdfFiles(pdfFiles)
+    await mapConcurrent(pendingPdfUpdates, CONCURRENCY, async update => {
+      const publication = update.publish ? { status: 'published', published_at: new Date().toISOString() } : {}
+      ensure(await db.from('exam_subjects').update({ question_pdf_path: update.questionPath, explanation_pdf_path: update.explanationPath, ...publication }).eq('id', update.id))
+    })
+    if (purgeSupabasePdfs) await purgeMigratedSupabasePdfs(db, pdfFiles.map(file => file.destination))
+  } else if (pdfFiles.length) {
+    throw new Error('PDF 경로 변경을 완료하려면 --sync-pdf-server를 함께 사용해 주세요.')
   }
   if (regradeAttempts) await regradeAllAttempts(db)
   const action = check ? '정답·배점 대조' : replaceAnswerKeys ? '정답·배점 교체' : syncExamData ? '기출 자료 동기화' : '업로드'

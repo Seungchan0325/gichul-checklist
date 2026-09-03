@@ -378,9 +378,11 @@ function ExamPage({ user, exam, subject, admin, openAdmin, onSaved }: { user: Us
     const fileName = createDownloadFileName({ year: exam.year, month: exam.month, title: exam.title, subjectName: subject.name, kind, extension: 'pdf' })
     setDownloadingPdf(kind); setError('')
     try {
-      const response = await fetch(await createExamPdfUrl(path))
+      const response = await fetch(createExamPdfUrl(path))
       if (!response.ok) throw new Error('PDF를 다운로드하지 못했습니다.')
-      const objectUrl = URL.createObjectURL(await response.blob())
+      const blob = await response.blob()
+      if (await blob.slice(0, 5).text() !== '%PDF-') throw new Error('서버에서 올바른 PDF를 받지 못했습니다.')
+      const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = objectUrl
       link.download = fileName

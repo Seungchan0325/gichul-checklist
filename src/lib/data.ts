@@ -250,8 +250,11 @@ export async function deleteAccount() {
   }
 }
 
-export async function createExamPdfUrl(path: string) {
-  const result = await client().storage.from('exam-pdfs').createSignedUrl(path, 60 * 10)
-  if (result.error) throw result.error
-  return result.data.signedUrl
+export function createExamPdfUrl(pdfPath: string) {
+  const segments = pdfPath.split('/')
+  if (!pdfPath || pdfPath.startsWith('/') || segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\'))) {
+    throw new Error('PDF 경로가 올바르지 않습니다.')
+  }
+  const baseUrl = (import.meta.env.VITE_EXAM_PDF_BASE_URL || '/pdfs').replace(/\/+$/u, '')
+  return `${baseUrl}/${segments.map(segment => encodeURIComponent(segment)).join('/')}`
 }

@@ -48,7 +48,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          rsync --archive --compress --delete \
+          rsync --archive --compress --delete --exclude '/pdfs/' \
             dist/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/gichul-checklist/"
 
       - name: Smoke test production
